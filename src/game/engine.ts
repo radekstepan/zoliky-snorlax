@@ -502,7 +502,9 @@ export function rematch(config: GameConfig): GameState {
 export function sortHand(state: GameState): ActionResult {
   const s = structuredClone(state);
   const p = s.players[s.current];
-  const suitOrder = { s: 0, h: 1, d: 2, c: 3 } as const;
+  // Suits grouped but ordered to alternate black/red (s=black, h=red,
+  // c=black, d=red) so the two red suits never sit side by side.
+  const suitOrder = { s: 0, h: 1, c: 2, d: 3 } as const;
   p.hand.sort((a, b) => {
     if (a.joker && b.joker) return 0;
     if (a.joker) return 1;
