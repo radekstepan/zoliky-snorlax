@@ -1,7 +1,7 @@
 import { motion, AnimatePresence, Reorder } from "framer-motion";
 import { useMemo, useRef } from "react";
 import { GameState, meldsLocked } from "../game/engine";
-import { Meld, canAddToMeld, coverAll, findJokerSwap, meldPoints, isCleanRun } from "../game/melds";
+import { Meld, canAddToMeld, coverAll, canJollyClose, findJokerSwap, meldPoints, isCleanRun } from "../game/melds";
 import { Card, RULES } from "../game/core";
 import { deviceHovers } from "../utils/device";
 import PlayingCard, { CARD_SIZES } from "./PlayingCard";
@@ -323,7 +323,8 @@ export default function Board({
     if (!humanTurn || state.phase !== "play") return false;
     if (state.turnPhase !== "draw" || state.skipDraw) return false;
     if (!state.jollyCard || human.hand.length !== RULES.HAND_SIZE) return false;
-    return coverAll([...human.hand, state.jollyCard]) !== null;
+    const pool = [...human.hand, state.jollyCard];
+    return coverAll(pool) !== null || canJollyClose(pool);
   }, [humanTurn, state, human.hand]);
 
   const status = (() => {
@@ -332,7 +333,7 @@ export default function Board({
       const bot = state.players[state.current];
       return { title: `${bot.name}`, sub: thinkingBot !== null ? stepText || "přemýšlí…" : "čekej…", cls: "neon-pink" };
     }
-    if (state.jollyRush) return { title: "JOLLY HAND!", sub: "musíš vyložit celou ruku najednou", cls: "neon-gold" };
+    if (state.jollyRush) return { title: "JOLLY HAND!", sub: "vylož vše a poslední kartu odhoď", cls: "neon-gold" };
     if (state.skipDraw) return { title: "ODHOĎ KARTU", sub: "začínáš kolo jako předák", cls: "neon-gold" };
     if (state.turnPhase === "draw") return { title: "TÁHNI SI", sub: "balíček, hromádka (hned vyložit) nebo JOLLY", cls: "neon-blue" };
     if (state.pendingLayId !== null && human.hand.some((c) => c.id === state.pendingLayId))

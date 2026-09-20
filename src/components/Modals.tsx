@@ -278,7 +278,8 @@ export function RulesModal({ onClose }: { onClose: () => void }) {
       <RuleSection title="Jolly Hand">
         <p>
           Kdo má v ruce stále <b>12 karet</b>, může si místo táhnutí vzít spodní kartu
-          pod balíčkem — ale v tom tahu <b>musí vyložit celou ruku a kolo zavřít</b>.
+          pod balíčkem — ale v tom tahu <b>musí vyložit všechny ostatní karty a poslední
+          kartou kolo zavřít (odhodit ji)</b>.
           Ostatním se pak počítá <b>−2 body za každou kartu v ruce</b>. Vzácné, ale dramatické…
         </p>
       </RuleSection>

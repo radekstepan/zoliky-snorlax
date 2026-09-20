@@ -19,6 +19,8 @@ import {
   findFirstMeld,
   canAddToMeld,
   coverAll,
+  canJollyClose,
+  jollyDiscardIndex,
   findJokerSwap,
   findAllMelds,
 } from "./melds";
@@ -56,7 +58,8 @@ function mustUseId(s: GameState): number | null {
 function shouldTakeJolly(s: GameState): boolean {
   const me = meOf(s);
   if (!s.jollyCard || me.hand.length !== RULES.HAND_SIZE) return false;
-  return coverAll([...me.hand, s.jollyCard]) !== null;
+  const pool = [...me.hand, s.jollyCard];
+  return coverAll(pool) !== null || canJollyClose(pool);
 }
 
 function shouldTakeDiscard(s: GameState): boolean {
@@ -136,17 +139,30 @@ export function planBotTurn(initial: GameState): BotAction[] {
   // 1) draw (skipped by the předák, who starts the round with a discard)
   if (!sim.skipDraw) {
     if (shouldTakeJolly(sim)) {
-      // Jolly Hand: take the bottom card and lay the whole hand at once.
+      // Jolly Hand: take the bottom card, lay everything but one card,
+      // then discard the last card to close.
       const res = takeJolly(sim);
       if (!res.events.some((e) => e.type === "invalid")) {
         sim = res.state;
         actions.push({ kind: "jolly" });
-        const cov = coverAll(meOf(sim).hand);
-        if (cov) {
-          const ids = meOf(sim).hand.map((c) => c.id);
+        const hand = meOf(sim).hand;
+        if (coverAll(hand) !== null) {
+          const ids = hand.map((c) => c.id);
           const r = layMeld(sim, ids);
           sim = r.state;
           actions.push({ kind: "meld", cardIds: ids });
+        } else {
+          const di = jollyDiscardIndex(hand);
+          if (di >= 0) {
+            const restIds = hand.filter((_, i) => i !== di).map((c) => c.id);
+            const r = layMeld(sim, restIds);
+            if (!r.events.some((e) => e.type === "invalid")) {
+              sim = r.state;
+              actions.push({ kind: "meld", cardIds: restIds });
+              const last = meOf(sim).hand[0];
+              if (last) actions.push({ kind: "discard", cardId: last.id });
+            }
+          }
         }
         return actions; // round over, or take failed (unreachable)
       }

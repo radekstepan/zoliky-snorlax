@@ -15,7 +15,7 @@ import {
   createGame,
   GameEvent,
 } from "./game/engine";
-import { Meld, bestPacking, bestPackingIncluding, coverAll, findFirstMeld, findJokerSwap } from "./game/melds";
+import { Meld, bestPacking, bestPackingIncluding, coverAll, jollyDiscardIndex, findFirstMeld, findJokerSwap } from "./game/melds";
 import { RULES } from "./game/core";
 import { planBotTurn, BotAction } from "./game/bot";
 import { sfx } from "./game/sounds";
@@ -407,13 +407,19 @@ export default function App() {
   const doHint = () => {
     if (!game || !humanTurn || game.turnPhase !== "action") return;
     const me = game.players[0];
-    // Jolly rush: the whole hand must go down at once.
+    // Jolly rush: lay everything but one card, then discard the last one.
     if (game.jollyRush) {
       if (coverAll(me.hand)) {
         setSelected(me.hand.map((c) => c.id));
         sfx.click();
       } else {
-        toast("Celou ruku s touto kartou vyložit nejde.", "bad");
+        const di = jollyDiscardIndex(me.hand);
+        if (di >= 0) {
+          setSelected(me.hand.filter((_, i) => i !== di).map((c) => c.id));
+          sfx.click();
+        } else {
+          toast("Celou ruku s touto kartou vyložit nejde.", "bad");
+        }
       }
       return;
     }

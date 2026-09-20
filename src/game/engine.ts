@@ -16,6 +16,7 @@ import {
   firstMeldOk,
   firstMeldProblem,
   coverAll,
+  canJollyClose,
   findAllMelds,
   bestPackingIncluding,
   meldPoints,
@@ -68,7 +69,7 @@ export interface GameState {
   pendingLayId: number | null;
   /** Joker taken from the table this turn — must be used before discarding. */
   pendingJokerId: number | null;
-  /** Jolly Hand attempt in progress — the whole hand must be laid. */
+  /** Jolly Hand attempt in progress — meld everything, discard the last card. */
   jollyRush: boolean;
   melds: Meld[];
   round: number;
@@ -316,7 +317,7 @@ export function draw(state: GameState, from: "stock" | "discard"): ActionResult 
 }
 
 /* ------------------------------------------------------------------ */
-/*  Jolly Hand — take the face-up bottom card and lay everything       */
+/*  Jolly Hand — take the face-up bottom card, meld the rest, discard  */
 /* ------------------------------------------------------------------ */
 
 export function takeJolly(state: GameState): ActionResult {
@@ -329,7 +330,8 @@ export function takeJolly(state: GameState): ActionResult {
     return invalid(state, "Pod balíčkem už žádná karta není.");
   if (me.hand.length !== RULES.HAND_SIZE)
     return invalid(state, "Jolly Hand jde jen se 12 kartami v ruce.");
-  if (!coverAll([...me.hand, state.jollyCard]))
+  const jollyPool = [...me.hand, state.jollyCard];
+  if (coverAll(jollyPool) === null && !canJollyClose(jollyPool))
     return invalid(state, "S touto kartou by nešla vyložit celá ruka.");
   const s = structuredClone(state);
   const p = s.players[s.current];
@@ -340,7 +342,7 @@ export function takeJolly(state: GameState): ActionResult {
   s.jollyRush = true;
   pushLog(
     s,
-    `${p.name} bere JOLLY kartu a musí vyložit celou ruku!`,
+    `${p.name} bere JOLLY kartu a musí vyložit celou ruku (poslední kartu odhodí)!`,
     "warn"
   );
   return { state: s, events: [{ type: "jolly", player: s.current }] };
@@ -557,7 +559,9 @@ export function discard(state: GameState, cardId: number): ActionResult {
   const me = state.players[state.current];
   const card = me.hand.find((c) => c.id === cardId);
   if (!card) return invalid(state, "Karta není v ruce.");
-  if (state.jollyRush)
+  // A Jolly Hand closes with a final discard: everything else must already
+  // be melded, so only the last card in hand may be discarded.
+  if (state.jollyRush && me.hand.length !== 1)
     return invalid(state, "Jolly Hand: musíš vyložit všechny karty!");
   if (
     state.pendingLayId !== null &&
@@ -579,9 +583,9 @@ export function discard(state: GameState, cardId: number): ActionResult {
   if (p.hand.length === 0) {
     // the closer dramatically discards the last card face down
     pushLog(s, `${p.name} dramaticky odhazuje poslední kartu lícem dolů!`, "good");
-    return endRound(s, s.current, false, [
+    return endRound(s, s.current, s.jollyRush, [
       ...events,
-      { type: "close", player: s.current, jolly: false, faceDown: true },
+      { type: "close", player: s.current, jolly: s.jollyRush, faceDown: true },
     ]);
   }
 

@@ -498,6 +498,24 @@ export function coverAll(cards: Card[]): Meld[] | null {
   return melds;
 }
 
+/**
+ * Jolly Hand closes by melding all but one card and discarding the last one.
+ * Returns an index into `cards` whose removal leaves a fully coverable rest,
+ * or -1 when no such discard exists.
+ */
+export function jollyDiscardIndex(cards: Card[]): number {
+  for (let i = 0; i < cards.length; i++) {
+    const rest = cards.filter((_, j) => j !== i);
+    if (coverAll(rest) !== null) return i;
+  }
+  return -1;
+}
+
+/** True when the hand can close as a Jolly Hand via one final discard. */
+export function canJollyClose(cards: Card[]): boolean {
+  return jollyDiscardIndex(cards) >= 0;
+}
+
 /** All table melds this card could be laid off onto. */
 export function layoffTargets(card: Card, melds: Meld[]): Meld[] {
   return melds.filter((m) => canAddToMeld(m, card) !== null);

@@ -345,6 +345,43 @@ describe("closing, scoring and next round", () => {
     expect(laid.state.players[other].roundDelta).toBe(-4);
   });
 
+  it("a Jolly Hand closes by melding 12 and discarding the last card", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.turnPhase = "draw";
+    const me = s.current;
+    const other = (me + 1) % 2;
+    const spades = [c(10, "s"), c(11, "s"), c(12, "s"), c(13, "s")];
+    const sevens = [c(7, "h"), c(7, "d"), c(7, "s")];
+    const hearts = [c(10, "h"), c(11, "h"), c(12, "h"), c(13, "h"), c(14, "h")];
+    s.players[me].hand = [...spades, ...sevens, ...hearts];
+    s.players[other].hand = [c(3, "d"), c(4, "s")];
+    s.jollyCard = c(3, "c"); // odd card out — meld the rest, discard it
+    const taken = takeJolly(s);
+    expect(invalidOf(taken.events)).toHaveLength(0);
+    expect(taken.state.jollyRush).toBe(true);
+    // discarding mid-rush is blocked until a single card is left
+    const early = discard(taken.state, taken.state.players[me].hand[0].id);
+    expect(invalidOf(early.events)).toHaveLength(1);
+    // lay in parts, then discard the last card to close
+    const ids = (cards: Card[]) => cards.map((x) => x.id);
+    const lay1 = layMeld(taken.state, ids(spades));
+    expect(invalidOf(lay1.events)).toHaveLength(0);
+    const lay2 = layMeld(lay1.state, ids(sevens));
+    expect(invalidOf(lay2.events)).toHaveLength(0);
+    const lay3 = layMeld(lay2.state, ids(hearts));
+    expect(invalidOf(lay3.events)).toHaveLength(0);
+    expect(lay3.state.phase).toBe("play");
+    expect(lay3.state.players[me].hand).toHaveLength(1);
+    const closed = discard(lay3.state, lay3.state.players[me].hand[0].id);
+    expect(invalidOf(closed.events)).toHaveLength(0);
+    expect(closed.state.phase).toBe("roundEnd");
+    expect(closed.state.roundEndInfo?.jolly).toBe(true);
+    expect(closed.events).toContainEqual(
+      expect.objectContaining({ type: "close", player: me, jolly: true })
+    );
+    expect(closed.state.players[other].roundDelta).toBe(-4);
+  });
+
   it("takeJolly rejects unlayable hands", () => {
     let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
     s.turnPhase = "draw";
