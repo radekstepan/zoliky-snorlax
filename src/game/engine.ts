@@ -270,10 +270,14 @@ export function draw(state: GameState, from: "stock" | "discard"): ActionResult 
       );
     const top = s.discard[s.discard.length - 1];
     // A discard-pile card must be laid immediately: it has to fit a table
-    // meld, or form a (first-)meld with cards in hand.
+    // meld, form a (first-)meld with cards in hand — or, when already
+    // melded, start a brand-new meld with cards in hand.
     if (me.melded) {
-      if (!s.melds.some((m) => canAddToMeld(m, top) !== null))
-        return invalid(state, "Tuto kartu by nešlo hned vyložit.");
+      if (!s.melds.some((m) => canAddToMeld(m, top) !== null)) {
+        const pool = [...me.hand, top];
+        if (!bestPackingIncluding(pool, false, 0, pool.length - 1))
+          return invalid(state, "Tuto kartu by nešlo hned vyložit.");
+      }
     } else {
       const pool = [...me.hand, top];
       if (
@@ -715,6 +719,30 @@ export function sortHand(state: GameState): ActionResult {
   };
   permute([...present], 0);
   p.hand = [...best.flatMap((suit) => groups.get(suit)!), ...jokers];
+  return { state: s, events: [] };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Manual hand order (drag & drop in the UI — no game effect)          */
+/* ------------------------------------------------------------------ */
+
+/** Reapply a UI-reordered id list to the current player's hand. Silent no-op unless it holds exactly the cards in hand. */
+export function reorderHand(
+  state: GameState,
+  orderedIds: number[]
+): ActionResult {
+  const p = state.players[state.current];
+  if (
+    orderedIds.length !== p.hand.length ||
+    p.hand.every((c, i) => c.id === orderedIds[i])
+  )
+    return { state, events: [] };
+  const ids = new Set(orderedIds);
+  if (ids.size !== orderedIds.length) return { state, events: [] };
+  if (!p.hand.every((c) => ids.has(c.id))) return { state, events: [] };
+  const s = structuredClone(state);
+  const byId = new Map(s.players[s.current].hand.map((c) => [c.id, c]));
+  s.players[s.current].hand = orderedIds.map((id) => byId.get(id)!);
   return { state: s, events: [] };
 }
 

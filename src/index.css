@@ -208,6 +208,8 @@ body,
   box-shadow: 0 0 18px rgba(5, 217, 232, 0.75), 0 2px 0 rgba(0,0,0,0.35), 0 8px 18px rgba(0,0,0,0.45);
 }
 .card-hoverable { cursor: pointer; }
+.hand-draggable { cursor: grab; }
+.hand-draggable:active { cursor: grabbing; }
 
 .card-layoff-target {
   outline: 3px dashed var(--color-neon-gold);

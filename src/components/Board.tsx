@@ -1,4 +1,4 @@
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, Reorder } from "framer-motion";
 import { useMemo, useRef } from "react";
 import { GameState, meldsLocked } from "../game/engine";
 import { Meld, canAddToMeld, coverAll, findJokerSwap, meldPoints, isCleanRun } from "../game/melds";
@@ -19,6 +19,7 @@ interface BoardProps {
   onSort: () => void;
   onHint: () => void;
   onMeldClick: (meld: Meld, jokerCardId?: number) => void;
+  onReorderHand: (orderedIds: number[]) => void;
   onOpenMenu: () => void;
   muted: boolean;
   onToggleMute: () => void;
@@ -289,6 +290,7 @@ export default function Board({
   onSort,
   onHint,
   onMeldClick,
+  onReorderHand,
   onOpenMenu,
   muted,
   onToggleMute,
@@ -306,6 +308,8 @@ export default function Board({
 
   // stagger the deal animation only on the first render of a fresh round
   const roundRef = useRef(0);
+  // set while a card drag is in flight so the trailing click doesn't toggle select
+  const dragMoved = useRef(false);
   const isNewRound = roundRef.current !== state.round;
   roundRef.current = state.round;
   const prefix = `g${animKey}-`;
@@ -531,29 +535,79 @@ export default function Board({
             </div>
           </div>
 
-          {/* hand */}
-          <div className="fan-hand flex justify-center mt-3 overflow-x-auto no-scrollbar pt-4 pb-2 px-1" data-testid="player-hand">
-            {human.hand.map((c, i) => {
-              const isSel = selected.includes(c.id);
-              return (
-                <PlayingCard
-                  key={c.id}
-                  card={c}
-                  prefix={prefix}
-                  size="lg"
-                  selected={isSel}
-                  hoverable={humanTurn && state.phase === "play"}
-                  lifted={isSel}
-                  dealDelay={isNewRound ? Math.min(i * 0.04, 0.6) : 0}
-                  zIndex={isSel ? 50 : i}
-                  onClick={humanTurn && state.phase === "play" ? () => onToggleCard(c.id) : undefined}
-                />
-              );
-            })}
-            {human.hand.length === 0 && (
-              <span className="font-pixel text-[8px] opacity-40 py-6">Ruka je prázdná…</span>
-            )}
-          </div>
+          {/* hand — draggable on the human turn, static otherwise */}
+          {humanTurn && state.phase === "play" ? (
+            <Reorder.Group
+              as="div"
+              axis="x"
+              values={human.hand}
+              onReorder={(cards) => onReorderHand(cards.map((c) => c.id))}
+              className="fan-hand flex justify-center mt-3 overflow-x-auto no-scrollbar pt-4 pb-2 px-1"
+              data-testid="player-hand"
+            >
+              {human.hand.map((c, i) => {
+                const isSel = selected.includes(c.id);
+                return (
+                  <Reorder.Item
+                    as="div"
+                    key={c.id}
+                    value={c}
+                    className="hand-draggable relative shrink-0"
+                    style={{ zIndex: isSel ? 50 : i }}
+                    whileDrag={{ scale: 1.12, zIndex: 100 }}
+                    onDragStart={() => {
+                      dragMoved.current = true;
+                    }}
+                    onDragEnd={() => {
+                      window.setTimeout(() => {
+                        dragMoved.current = false;
+                      }, 0);
+                    }}
+                    title="Přetáhni pro změnu pořadí"
+                  >
+                    <PlayingCard
+                      card={c}
+                      prefix={prefix}
+                      size="lg"
+                      selected={isSel}
+                      hoverable
+                      lifted={isSel}
+                      dealDelay={isNewRound ? Math.min(i * 0.04, 0.6) : 0}
+                      zIndex={isSel ? 50 : i}
+                      onClick={() => {
+                        if (!dragMoved.current) onToggleCard(c.id);
+                      }}
+                    />
+                  </Reorder.Item>
+                );
+              })}
+              {human.hand.length === 0 && (
+                <span className="font-pixel text-[8px] opacity-40 py-6">Ruka je prázdná…</span>
+              )}
+            </Reorder.Group>
+          ) : (
+            <div className="fan-hand flex justify-center mt-3 overflow-x-auto no-scrollbar pt-4 pb-2 px-1" data-testid="player-hand">
+              {human.hand.map((c, i) => {
+                const isSel = selected.includes(c.id);
+                return (
+                  <PlayingCard
+                    key={c.id}
+                    card={c}
+                    prefix={prefix}
+                    size="lg"
+                    selected={isSel}
+                    hoverable={false}
+                    lifted={isSel}
+                    dealDelay={isNewRound ? Math.min(i * 0.04, 0.6) : 0}
+                    zIndex={isSel ? 50 : i}
+                  />
+                );
+              })}
+              {human.hand.length === 0 && (
+                <span className="font-pixel text-[8px] opacity-40 py-6">Ruka je prázdná…</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

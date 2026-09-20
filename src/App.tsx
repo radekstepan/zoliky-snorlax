@@ -9,6 +9,7 @@ import {
   layoff,
   swapJoker,
   discard,
+  reorderHand,
   sortHand,
   nextRound,
   createGame,
@@ -387,6 +388,12 @@ export default function App() {
     sfx.click();
   };
 
+  const doReorderHand = (orderedIds: number[]) => {
+    if (!game || game.current !== 0 || game.phase !== "play") return;
+    const res = reorderHand(game, orderedIds);
+    if (res.state !== game) setGame(res.state);
+  };
+
   const doTakeJolly = () => {
     if (!game || !humanTurn) return;
     const res = takeJolly(game);
@@ -494,6 +501,7 @@ export default function App() {
           onSort={doSort}
           onHint={doHint}
           onMeldClick={doMeldClick}
+          onReorderHand={doReorderHand}
           onOpenMenu={() => {
             paused.current = true;
             setShowPause(true);

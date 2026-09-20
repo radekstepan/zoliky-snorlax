@@ -8,6 +8,7 @@ import {
   layoff,
   meldsLocked,
   nextRound,
+  reorderHand,
   sortHand,
   swapJoker,
   takeJolly,
@@ -284,6 +285,24 @@ describe("pending pile card", () => {
     const done = discard(s, s.players[s.current].hand[0].id);
     expect(invalidOf(done.events)).toHaveLength(0);
   });
+
+  it("melded player may take the pile card for a brand-new meld", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.turnPhase = "draw";
+    const table = tryCreateMeld([c(7, "h"), c(8, "h"), c(9, "h")])!;
+    s.melds = [table];
+    s.players[s.current].melded = true;
+    // two aces in hand, third ace (other suit) on the pile — no table layoff fits
+    s.players[s.current].hand = [c(14, "h"), c(14, "d"), c(2, "c")];
+    const top = c(14, "s");
+    s.discard = [top];
+    const r = draw(s, "discard");
+    expect(invalidOf(r.events)).toHaveLength(0);
+    expect(r.state.pendingLayId).toBe(top.id);
+    // …and the new set can actually be laid
+    const laid = layMeld(r.state, [s.players[s.current].hand[0].id, s.players[s.current].hand[1].id, top.id]);
+    expect(invalidOf(laid.events)).toHaveLength(0);
+  });
 });
 
 describe("closing, scoring and next round", () => {
@@ -378,6 +397,29 @@ describe("sortHand and discardUseful", () => {
         break;
       }
     }
+  });
+
+  it("reorderHand reapplies a dragged card order without touching the cards", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.players[s.current].hand = [c(2, "h"), c(5, "d"), c(9, "s")];
+    const ids = handIds(s);
+    // drag the last card to the front
+    const r = reorderHand(s, [ids[2], ids[0], ids[1]]);
+    expect(r.events).toHaveLength(0);
+    expect(handIds(r.state)).toEqual([ids[2], ids[0], ids[1]]);
+    // same card objects, input state untouched
+    expect(r.state.players[s.current].hand[0]).toEqual(s.players[s.current].hand[2]);
+    expect(handIds(s)).toEqual(ids);
+  });
+
+  it("reorderHand ignores unchanged, incomplete or duplicated orders", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.players[s.current].hand = [c(2, "h"), c(5, "d"), c(9, "s")];
+    const ids = handIds(s);
+    expect(reorderHand(s, [...ids]).state).toBe(s);
+    expect(reorderHand(s, [ids[0], ids[1]]).state).toBe(s);
+    expect(reorderHand(s, [ids[0], ids[0], ids[1]]).state).toBe(s);
+    expect(reorderHand(s, [ids[0], ids[1], 999999]).state).toBe(s);
   });
 
   it("discardUseful spots layoffs and 3-card completions", () => {
