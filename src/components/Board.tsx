@@ -4,6 +4,7 @@ import { GameState, meldsLocked } from "../game/engine";
 import { Meld, canAddToMeld, coverAll, canJollyClose, findJokerSwap, meldPoints, isCleanRun } from "../game/melds";
 import { Card, RULES } from "../game/core";
 import { deviceHovers } from "../utils/device";
+import { kartyCount, kombinaceCount } from "../utils/czech";
 import PlayingCard, { CARD_SIZES } from "./PlayingCard";
 
 interface BoardProps {
@@ -72,7 +73,7 @@ function PlayerChip({ state, idx, isTurn, thinking }: { state: GameState; idx: n
             <div key={c.id} className="card-back w-4 h-6 rounded-[4px] relative" style={{ zIndex: 5 - i }} />
           ))}
         </div>
-        <span className="font-pixel text-[8px] opacity-70">{p.hand.length} karet</span>
+        <span className="font-pixel text-[8px] opacity-70">{kartyCount(p.hand.length)}</span>
       </div>
       {active && (
         <div className="absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded bg-black/80 border whitespace-nowrap"
@@ -340,11 +341,19 @@ export default function Board({
     }
     if (state.jollyRush) return { title: "JOLLY HAND!", sub: "vylož vše a poslední kartu odhoď", cls: "neon-gold" };
     if (state.skipDraw) return { title: "ODHOĎ KARTU", sub: "začínáš kolo jako předák", cls: "neon-gold" };
-    if (state.turnPhase === "draw") return { title: "TÁHNI SI", sub: "balíček, hromádka (hned vyložit) nebo JOLLY", cls: "neon-blue" };
+    // While melding is locked the only legal moves are draw + discard —
+    // the status hint already says so, so the table header stays quiet.
+    const locked = meldsLocked(state);
+    if (state.turnPhase === "draw")
+      return locked
+        ? { title: "TÁHNI SI", sub: `balíček — hromádka až po ${RULES.MELD_WAIT_ROUNDS}. kole`, cls: "neon-blue" }
+        : { title: "TÁHNI SI", sub: "balíček, hromádka (hned vyložit) nebo JOLLY", cls: "neon-blue" };
     if (state.pendingLayId !== null && human.hand.some((c) => c.id === state.pendingLayId))
       return { title: "VYLOŽ KARTU", sub: "kartu z hromádky musíš hned vyložit", cls: "neon-gold" };
     if (state.pendingJokerId !== null && human.hand.some((c) => c.id === state.pendingJokerId))
       return { title: "VYUŽIJ ŽOLÍKA", sub: "vyměněného žolíka musíš v tomto tahu využít", cls: "neon-gold" };
+    if (locked)
+      return { title: "ODHOĎ KARTU", sub: `vykládání až po ${RULES.MELD_WAIT_ROUNDS}. kole`, cls: "neon-gold" };
     return { title: "JSI NA ŘADĚ", sub: "vylož kombinaci, přilož, vyměň žolíka nebo odhoď", cls: "neon-green" };
   })();
 
@@ -431,13 +440,7 @@ export default function Board({
         <div className="flex-1 min-h-0 panel p-3 overflow-y-auto pixel-scroll">
           <div className="flex items-center justify-between mb-2">
             <span className="panel-title">Výklady na stole</span>
-            {state.phase === "play" && meldsLocked(state) ? (
-              <span className="font-pixel text-[7px] px-1.5 py-0.5 rounded bg-neon-gold/20 text-neon-gold border border-neon-gold/40">
-                VYKLÁDÁNÍ AŽ PO {RULES.MELD_WAIT_ROUNDS}. KOLE
-              </span>
-            ) : (
-              <span className="font-pixel text-[7px] opacity-50">{state.melds.length} kombinací</span>
-            )}
+            <span className="font-pixel text-[7px] opacity-50">{kombinaceCount(state.melds.length)}</span>
           </div>
           {state.melds.length === 0 ? (
             <div className="h-full min-h-[80px] flex items-center justify-center border-2 border-dashed border-white/10 rounded-lg">
@@ -556,7 +559,7 @@ export default function Board({
               axis="x"
               values={human.hand}
               onReorder={(cards) => onReorderHand(cards.map((c) => c.id))}
-              className="fan-hand flex justify-center mt-3 overflow-x-auto no-scrollbar pt-4 pb-2 px-1"
+              className="fan-hand flex justify-center mt-3 overflow-x-auto no-scrollbar pt-6 pb-4 px-2"
               data-testid="player-hand"
             >
               {human.hand.map((c, i) => {
@@ -601,7 +604,7 @@ export default function Board({
               )}
             </Reorder.Group>
           ) : (
-            <div className="fan-hand flex justify-center mt-3 overflow-x-auto no-scrollbar pt-4 pb-2 px-1" data-testid="player-hand">
+            <div className="fan-hand flex justify-center mt-3 overflow-x-auto no-scrollbar pt-6 pb-4 px-2" data-testid="player-hand">
               {human.hand.map((c, i) => {
                 const isSel = selected.includes(c.id);
                 return (

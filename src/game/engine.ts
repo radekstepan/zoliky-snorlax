@@ -23,6 +23,7 @@ import {
   tryCreateMeld,
   JokerSwap,
 } from "./melds";
+import { bodyCount, kombinaceAccCount } from "../utils/czech";
 
 export type Phase = "play" | "roundEnd" | "gameEnd";
 export type TurnPhase = "draw" | "action";
@@ -396,9 +397,7 @@ export function layMeld(state: GameState, cardIds: number[]): ActionResult {
   const pts = newMelds.reduce((a, m) => a + meldPoints(m), 0);
   pushLog(
     s,
-    `${p.name} vykládá ${newMelds.length} kombinac${
-      newMelds.length === 1 ? "i" : "e"
-    } za ${pts} bodů.`,
+    `${p.name} vykládá ${kombinaceAccCount(newMelds.length)} za ${bodyCount(pts)}.`,
     "good"
   );
   const events: GameEvent[] = [{ type: "meld", player: s.current, points: pts }];
@@ -648,7 +647,7 @@ function endRound(
     newEvents.push({ type: "gameEnd", winner: bestIdx });
     pushLog(
       s,
-      `Konec hry — vítězí ${s.players[bestIdx].name} s ${s.players[bestIdx].score} body!`,
+      `Konec hry — vítězí ${s.players[bestIdx].name} s ${bodyCount(s.players[bestIdx].score)}!`,
       "good"
     );
   }

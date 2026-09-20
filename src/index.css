@@ -203,9 +203,12 @@ body,
 }
 
 .card-selected {
-  outline: 3px solid var(--color-neon-blue);
-  outline-offset: 0px;
-  box-shadow: 0 0 18px rgba(5, 217, 232, 0.75), 0 2px 0 rgba(0,0,0,0.35), 0 8px 18px rgba(0,0,0,0.45);
+  border-color: var(--color-neon-blue);
+  box-shadow:
+    0 0 0 3px var(--color-neon-blue),
+    0 0 18px rgba(5, 217, 232, 0.75),
+    0 2px 0 rgba(0,0,0,0.35),
+    0 8px 18px rgba(0,0,0,0.45);
 }
 .card-hoverable { cursor: pointer; }
 .hand-draggable { cursor: grab; }

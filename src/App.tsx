@@ -19,6 +19,7 @@ import { Meld, bestPacking, bestPackingIncluding, coverAll, jollyDiscardIndex, f
 import { RULES } from "./game/core";
 import { planBotTurn, BotAction } from "./game/bot";
 import { sfx } from "./game/sounds";
+import { bodyCount } from "./utils/czech";
 import Board from "./components/Board";
 import {
   StartScreen,
@@ -98,7 +99,7 @@ export default function App() {
           case "meld":
             sfx.meld();
             toast(
-              `${game.players[e.player].name} vykládá kombinace za ${e.points} bodů.`,
+              `${game.players[e.player].name} vykládá za ${bodyCount(e.points)}.`,
               "good"
             );
             break;

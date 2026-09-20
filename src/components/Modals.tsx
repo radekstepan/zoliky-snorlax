@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { ReactNode } from "react";
 import { Difficulty, GameState } from "../game/engine";
 import { RULES } from "../game/core";
+import { kartyCount } from "../utils/czech";
 
 /* ------------------------------------------------------------------ */
 /*  Shell                                                              */
@@ -363,7 +364,7 @@ export function RoundEndModal({
                 {p.name[0]}
               </span>
               <span className="font-pixel text-[9px] flex-1 truncate">{p.name}</span>
-              <span className="font-pixel text-[7px] opacity-60">{p.hand.length} karet v ruce</span>
+              <span className="font-pixel text-[7px] opacity-60">{kartyCount(p.hand.length)} v ruce</span>
               <span
                 className={`font-pixel text-[11px] w-16 text-right ${
                   p.roundDelta < 0 ? "text-neon-pink" : "neon-green"
