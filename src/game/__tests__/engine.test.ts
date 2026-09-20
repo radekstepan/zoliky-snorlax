@@ -1,0 +1,389 @@
+import { describe, expect, it } from "vitest";
+import {
+  createGame,
+  discard,
+  discardUseful,
+  draw,
+  layMeld,
+  layoff,
+  meldsLocked,
+  nextRound,
+  sortHand,
+  swapJoker,
+  takeJolly,
+} from "../engine";
+import type { GameState } from "../engine";
+import { tryCreateMeld } from "../melds";
+import type { Card } from "../core";
+import { JOKER_RANK, RULES } from "../core";
+
+let id = 5000;
+const c = (rank: number, suit: Card["suit"] = "h"): Card => ({ id: id++, suit, rank });
+const joker = (): Card => ({ id: id++, suit: "s", rank: JOKER_RANK, joker: true });
+
+const invalidOf = (events: { type: string }[]) =>
+  events.filter((e) => e.type === "invalid");
+
+/** Fresh game with the turn handed to controllable, lock-free defaults. */
+function unlocked(game: GameState): GameState {
+  const s = structuredClone(game);
+  s.turnCount = RULES.MELD_WAIT_ROUNDS * s.players.length;
+  s.skipDraw = false;
+  return s;
+}
+
+function handIds(s: GameState, player = s.current): number[] {
+  return s.players[player].hand.map((x) => x.id);
+}
+
+describe("createGame", () => {
+  it("deals 13 to the předák and 12 to everyone else", () => {
+    const s = createGame({ playerCount: 3, difficulty: "medium", target: 300 });
+    expect(s.players).toHaveLength(3);
+    expect(s.players[0].isBot).toBe(false);
+    expect(s.players[1].isBot).toBe(true);
+    expect(s.players[s.current].hand).toHaveLength(13);
+    for (const p of s.players) {
+      if (p.id !== s.current) expect(p.hand).toHaveLength(12);
+    }
+    expect(s.turnPhase).toBe("action");
+    expect(s.skipDraw).toBe(true);
+    expect(s.phase).toBe("play");
+  });
+
+  it("clamps player count to 2..4 and keeps all 108 cards in play", () => {
+    const s = createGame({ playerCount: 9, difficulty: "easy", target: 200 });
+    expect(s.players).toHaveLength(4);
+    const inHands = s.players.reduce((n, p) => n + p.hand.length, 0);
+    const total =
+      inHands + s.deck.length + s.discard.length + (s.jollyCard ? 1 : 0);
+    expect(total).toBe(108);
+  });
+
+  it("locks laying for the first three table rounds", () => {
+    const s = createGame({ playerCount: 2, difficulty: "easy", target: 300 });
+    expect(meldsLocked(s)).toBe(true);
+    expect(meldsLocked(unlocked(s))).toBe(false);
+  });
+});
+
+describe("discard / draw cycle", () => {
+  it("the předák opens by discarding, then the next player draws stock", () => {
+    let s = createGame({ playerCount: 2, difficulty: "easy", target: 300 });
+    const first = s.players[s.current].hand[0].id;
+    let r = discard(s, first);
+    expect(invalidOf(r.events)).toHaveLength(0);
+    s = r.state;
+    expect(s.discard).toHaveLength(1);
+    expect(s.turnPhase).toBe("draw");
+    expect(s.skipDraw).toBe(false);
+
+    const before = s.players[s.current].hand.length;
+    r = draw(s, "stock");
+    expect(invalidOf(r.events)).toHaveLength(0);
+    expect(r.state.players[s.current].hand).toHaveLength(before + 1);
+    expect(r.state.turnPhase).toBe("action");
+  });
+
+  it("rejects discarding a card that is not in hand (state untouched)", () => {
+    const s = createGame({ playerCount: 2, difficulty: "easy", target: 300 });
+    const r = discard(s, -12345);
+    expect(invalidOf(r.events)).toHaveLength(1);
+    expect(r.state).toBe(s);
+  });
+
+  it("rejects drawing twice and drawing before the opening discard", () => {
+    const s = createGame({ playerCount: 2, difficulty: "easy", target: 300 });
+    expect(invalidOf(draw(s, "stock").events)).toHaveLength(1); // action phase
+    let next = discard(s, s.players[s.current].hand[0].id).state;
+    next = draw(next, "stock").state;
+    expect(invalidOf(draw(next, "stock").events)).toHaveLength(1);
+  });
+
+  it("rejects taking from the discard pile while laying is locked", () => {
+    let s = createGame({ playerCount: 2, difficulty: "easy", target: 300 });
+    s = discard(s, s.players[s.current].hand[0].id).state;
+    const r = draw(s, "discard");
+    expect(invalidOf(r.events)).toHaveLength(1);
+  });
+
+  it("lets a melded player take a layable pile card, flagging it pending", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.turnPhase = "draw";
+    const table = tryCreateMeld([c(7, "h"), c(8, "h"), c(9, "h")])!;
+    s.melds = [table];
+    s.players[s.current].melded = true;
+    const top = c(10, "h");
+    s.discard = [c(2, "c"), top];
+    const r = draw(s, "discard");
+    expect(invalidOf(r.events)).toHaveLength(0);
+    expect(r.state.pendingLayId).toBe(top.id);
+  });
+
+  it("rejects taking a pile card that cannot be laid at once", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.turnPhase = "draw";
+    s.melds = [];
+    s.players[s.current].melded = true;
+    s.players[s.current].hand = [c(2, "c"), c(13, "d")];
+    s.discard = [c(9, "s")];
+    const r = draw(s, "discard");
+    expect(invalidOf(r.events)).toHaveLength(1);
+    expect(r.state).toBe(s);
+  });
+
+  it("ends the round with no closer when stock and pile are exhausted", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.turnPhase = "draw";
+    s.deck = [];
+    s.discard = [c(2, "c")];
+    const r = draw(s, "stock");
+    expect(r.state.phase).toBe("roundEnd");
+    expect(r.state.roundEndInfo?.closedBy).toBe(-1);
+  });
+});
+
+describe("layMeld", () => {
+  function firstMeldHand(s: GameState): GameState {
+    const next = structuredClone(s);
+    // clean run Q-K-A (30) + sevens set (21) = 51 ≥ 36
+    next.players[next.current].hand = [
+      c(12, "h"), c(13, "h"), c(14, "h"),
+      c(7, "h"), c(7, "d"), c(7, "s"),
+      c(2, "c"),
+    ];
+    next.turnPhase = "action";
+    return next;
+  }
+
+  it("lays a valid first meld and marks the player melded", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s = firstMeldHand(s);
+    const ids = handIds(s).slice(0, 6);
+    const r = layMeld(s, ids);
+    expect(invalidOf(r.events)).toHaveLength(0);
+    expect(r.state.melds).toHaveLength(2);
+    expect(r.state.players[s.current].melded).toBe(true);
+    expect(r.state.players[s.current].hand).toHaveLength(1);
+  });
+
+  it("rejects laying while locked and below the 36-point gate", () => {
+    const locked = createGame({ playerCount: 2, difficulty: "easy", target: 300 });
+    expect(invalidOf(layMeld(locked, []).events)).toHaveLength(1);
+
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.players[s.current].hand = [c(7, "h"), c(8, "h"), c(9, "h"), c(2, "c")];
+    s.turnPhase = "action";
+    const r = layMeld(s, handIds(s).slice(0, 3));
+    expect(invalidOf(r.events)).toHaveLength(1);
+    expect(r.state).toBe(s);
+  });
+
+  it("rejects selections that do not form full melds", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.players[s.current].hand = [c(7, "h"), c(8, "h"), c(2, "c")];
+    s.turnPhase = "action";
+    const r = layMeld(s, handIds(s));
+    expect(invalidOf(r.events)).toHaveLength(1);
+  });
+});
+
+describe("layoff", () => {
+  it("appends a fitting card and rejects the rest", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    const table = tryCreateMeld([c(7, "h"), c(8, "h"), c(9, "h")])!;
+    s.melds = [table];
+    const me = s.players[s.current];
+    me.melded = true;
+    const good = c(10, "h");
+    const bad = c(10, "d");
+    me.hand = [good, bad];
+    s.turnPhase = "action";
+
+    const ok = layoff(s, good.id, table.id);
+    expect(invalidOf(ok.events)).toHaveLength(0);
+    expect(ok.state.melds[0].cards).toHaveLength(4);
+
+    const no = layoff(s, bad.id, table.id);
+    expect(invalidOf(no.events)).toHaveLength(1);
+  });
+
+  it("requires the player to have melded first", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    const table = tryCreateMeld([c(7, "h"), c(8, "h"), c(9, "h")])!;
+    s.melds = [table];
+    s.players[s.current].hand = [c(10, "h")];
+    s.turnPhase = "action";
+    expect(invalidOf(layoff(s, s.players[s.current].hand[0].id, table.id).events)).toHaveLength(1);
+  });
+});
+
+describe("swapJoker", () => {
+  function swapped(s: GameState) {
+    const next = structuredClone(s);
+    const table = tryCreateMeld([c(7, "h"), c(8, "h"), joker()])!;
+    const jokerId = table.cards.find((x) => x.joker)!.id;
+    next.melds = [table];
+    const rep = c(9, "h");
+    next.players[next.current].hand = [rep, c(5, "d"), c(5, "s")];
+    next.players[next.current].melded = true;
+    next.turnPhase = "action";
+    return { next, table, jokerId, rep };
+  }
+
+  it("swaps in the exact card and forces the joker to be used", () => {
+    const s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    const { next, table, jokerId, rep } = swapped(s);
+    const r = swapJoker(next, rep.id, table.id, jokerId);
+    expect(invalidOf(r.events)).toHaveLength(0);
+    expect(r.state.pendingJokerId).not.toBeNull();
+
+    // discarding is blocked until the swapped joker is laid
+    const stuck = discard(r.state, c(4, "c").id);
+    expect(invalidOf(stuck.events)).toHaveLength(1);
+
+    // laying the joker in a new set clears the obligation
+    const jokerIdInHand = r.state.pendingJokerId!;
+    const lay = layMeld(
+      r.state,
+      r.state.players[r.state.current].hand
+        .filter((x) => x.rank === 5 || x.id === jokerIdInHand)
+        .map((x) => x.id)
+    );
+    expect(invalidOf(lay.events)).toHaveLength(0);
+    expect(lay.state.pendingJokerId).toBeNull();
+  });
+
+  it("rejects a replacement that does not match the joker slot", () => {
+    const s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    const { next, table, jokerId } = swapped(s);
+    next.players[next.current].hand.push(c(10, "h"));
+    const r = swapJoker(next, next.players[next.current].hand.at(-1)!.id, table.id, jokerId);
+    expect(invalidOf(r.events)).toHaveLength(1);
+  });
+});
+
+describe("pending pile card", () => {
+  it("must be laid before the turn can end", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.turnPhase = "draw";
+    const table = tryCreateMeld([c(7, "h"), c(8, "h"), c(9, "h")])!;
+    s.melds = [table];
+    s.players[s.current].melded = true;
+    s.players[s.current].hand = [c(2, "c")];
+    const top = c(10, "h");
+    s.discard = [top];
+    s = draw(s, "discard").state;
+    expect(s.pendingLayId).toBe(top.id);
+
+    const blocked = discard(s, s.players[s.current].hand[0].id);
+    expect(invalidOf(blocked.events)).toHaveLength(1);
+
+    s = layoff(s, top.id, table.id).state;
+    expect(s.pendingLayId).toBeNull();
+    const done = discard(s, s.players[s.current].hand[0].id);
+    expect(invalidOf(done.events)).toHaveLength(0);
+  });
+});
+
+describe("closing, scoring and next round", () => {
+  it("closing face-down banks 0 for the closer and -1 per card for others", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    const me = s.current;
+    const other = (me + 1) % 2;
+    s.players[me].hand = [c(2, "c")];
+    s.players[other].hand = [c(3, "d"), c(4, "s"), joker()];
+    s.turnPhase = "action";
+    const r = discard(s, s.players[me].hand[0].id);
+    expect(r.state.phase).toBe("roundEnd");
+    expect(r.state.roundEndInfo?.closedBy).toBe(me);
+    expect(r.state.players[me].roundDelta).toBe(0);
+    // the joker is stashed for next round, not penalized
+    expect(r.state.players[other].roundDelta).toBe(-2);
+    expect(r.state.players[other].stash).toHaveLength(1);
+  });
+
+  it("a Jolly Hand lays the whole hand and doubles everyone else", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.turnPhase = "draw";
+    const me = s.current;
+    const other = (me + 1) % 2;
+    s.players[me].hand = [
+      c(7, "h"), c(7, "d"), c(7, "s"),
+      c(8, "h"), c(8, "d"), c(8, "s"),
+      c(9, "h"), c(9, "d"), c(9, "s"),
+      c(12, "h"), c(13, "h"), c(14, "h"),
+    ];
+    s.players[other].hand = [c(3, "d"), c(4, "s")];
+    s.jollyCard = joker(); // completes the sevens into a four-set: 3+3+3+4 = 13
+    const taken = takeJolly(s);
+    expect(invalidOf(taken.events)).toHaveLength(0);
+    expect(taken.state.jollyRush).toBe(true);
+    const laid = layMeld(taken.state, taken.state.players[me].hand.map((x) => x.id));
+    expect(invalidOf(laid.events)).toHaveLength(0);
+    expect(laid.state.phase).toBe("roundEnd");
+    expect(laid.state.roundEndInfo?.jolly).toBe(true);
+    expect(laid.state.players[other].roundDelta).toBe(-4);
+  });
+
+  it("takeJolly rejects unlayable hands", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.turnPhase = "draw";
+    s.players[s.current].hand = [c(2, "c"), c(13, "d")];
+    while (s.players[s.current].hand.length < RULES.HAND_SIZE) {
+      s.players[s.current].hand.push(c(4, "s"));
+    }
+    s.jollyCard = c(9, "s");
+    expect(invalidOf(takeJolly(s).events)).toHaveLength(1);
+  });
+
+  it("nextRound redeals and ends the game past the target", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 10 }));
+    s.players[0].score = -9;
+    s.players[1].score = -9;
+    const me = s.current;
+    s.players[me].hand = [c(2, "c")];
+    s.players[(me + 1) % 2].hand = [c(3, "d"), c(4, "s")];
+    s.turnPhase = "action";
+    const closed = discard(s, s.players[me].hand[0].id);
+    expect(closed.state.phase).toBe("gameEnd");
+    expect(closed.state.winner).toBe(me);
+
+    // ...while a calm round just advances the deal
+    let calm = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    const cme = calm.current;
+    calm.players[cme].hand = [c(2, "c")];
+    calm.players[(cme + 1) % 2].hand = [c(3, "d")];
+    calm.turnPhase = "action";
+    const end = discard(calm, calm.players[cme].hand[0].id);
+    expect(end.state.phase).toBe("roundEnd");
+    const round = nextRound(end.state);
+    expect(round.state.phase).toBe("play");
+    expect(round.state.round).toBe(2);
+  });
+});
+
+describe("sortHand and discardUseful", () => {
+  it("sortHand groups suits and parks jokers at the end", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.players[s.current].hand = [c(9, "h"), joker(), c(2, "d"), c(5, "h"), c(3, "d")];
+    const r = sortHand(s);
+    const hand = r.state.players[s.current].hand;
+    expect(hand.at(-1)!.joker).toBe(true);
+    const suits = hand.filter((x) => !x.joker).map((x) => x.suit);
+    expect(new Set(suits).size).toBeLessThanOrEqual(2);
+    for (let i = 1; i < suits.length; i++) {
+      if (suits[i] !== suits[0]) {
+        expect(suits.slice(i).every((x) => x === suits[i])).toBe(true);
+        break;
+      }
+    }
+  });
+
+  it("discardUseful spots layoffs and 3-card completions", () => {
+    const table = tryCreateMeld([c(7, "h"), c(8, "h"), c(9, "h")])!;
+    expect(discardUseful([], c(10, "h"), [table], true)).toBe(true);
+    expect(discardUseful([c(7, "d"), c(7, "s")], c(7, "c"), [], false)).toBe(true);
+    expect(discardUseful([c(2, "c"), c(13, "d")], c(9, "s"), [], false)).toBe(false);
+  });
+});

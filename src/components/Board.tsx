@@ -247,7 +247,7 @@ function Piles({
         >
           {top ? (
             <div style={{ filter: canDraw ? "drop-shadow(0 0 14px rgba(255,211,25,0.45))" : undefined }}>
-              <PlayingCard card={top} size="md" prefix={prefix} />
+              <PlayingCard card={top} size="md" prefix={prefix} noAnim />
             </div>
           ) : (
             <div
@@ -334,7 +334,7 @@ export default function Board({
   })();
 
   return (
-    <div className="h-full flex flex-col overflow-hidden arcade-bg">
+    <div className="h-full flex flex-col overflow-hidden arcade-bg" data-testid="board">
       {/* header */}
       <header className="flex items-center gap-3 px-3 sm:px-5 py-2.5 border-b border-white/10 shrink-0">
         <div className="font-pixel text-[13px] sm:text-[16px] neon-pink tracking-wider">ŽOLÍKY</div>
@@ -494,6 +494,7 @@ export default function Board({
             <div className="flex items-center gap-1.5 ml-auto flex-wrap justify-end">
               <button
                 type="button"
+                data-testid="btn-hint"
                 onClick={onHint}
                 disabled={!humanTurn || state.turnPhase !== "action"}
                 className="btn-arcade btn-blue px-2.5 py-2 text-[8px]"
@@ -502,6 +503,7 @@ export default function Board({
               </button>
               <button
                 type="button"
+                data-testid="btn-sort"
                 onClick={onSort}
                 disabled={!humanTurn}
                 className="btn-arcade btn-ghost px-2.5 py-2 text-[8px]"
@@ -510,6 +512,7 @@ export default function Board({
               </button>
               <button
                 type="button"
+                data-testid="btn-lay"
                 onClick={onLay}
                 disabled={!humanTurn || state.turnPhase !== "action" || selected.length < 3}
                 className="btn-arcade btn-green px-2.5 py-2 text-[8px]"
@@ -518,6 +521,7 @@ export default function Board({
               </button>
               <button
                 type="button"
+                data-testid="btn-discard"
                 onClick={onDiscard}
                 disabled={!humanTurn || state.turnPhase !== "action" || selected.length !== 1}
                 className="btn-arcade btn-primary px-2.5 py-2 text-[8px]"
@@ -528,7 +532,7 @@ export default function Board({
           </div>
 
           {/* hand */}
-          <div className="fan-hand flex justify-center mt-3 overflow-x-auto no-scrollbar pt-4 pb-2 px-1">
+          <div className="fan-hand flex justify-center mt-3 overflow-x-auto no-scrollbar pt-4 pb-2 px-1" data-testid="player-hand">
             {human.hand.map((c, i) => {
               const isSel = selected.includes(c.id);
               return (

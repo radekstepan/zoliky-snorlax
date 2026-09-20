@@ -95,7 +95,7 @@ export function StartScreen({
   onShowRules: () => void;
 }) {
   return (
-    <div className="h-full arcade-bg flex flex-col items-center justify-center relative overflow-hidden p-4">
+    <div className="h-full arcade-bg flex flex-col items-center justify-center relative overflow-hidden p-4" data-testid="start-screen">
       {/* floating suits */}
       {FLOATING_SUITS.map((s, i) => (
         <motion.span
@@ -173,10 +173,10 @@ export function StartScreen({
         </div>
 
         <div className="pt-1 flex flex-col gap-2.5">
-          <button type="button" onClick={onStart} className="btn-arcade btn-primary py-4 text-[13px] w-full">
+          <button type="button" onClick={onStart} data-testid="start-game" className="btn-arcade btn-primary py-4 text-[13px] w-full">
             ▶ HRÁT
           </button>
-          <button type="button" onClick={onShowRules} className="btn-arcade btn-ghost py-3 text-[9px] w-full">
+          <button type="button" onClick={onShowRules} data-testid="show-rules" className="btn-arcade btn-ghost py-3 text-[9px] w-full">
             PRAVIDLA HRY
           </button>
         </div>
