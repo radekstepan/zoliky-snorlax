@@ -17,8 +17,8 @@ import {
   firstMeldProblem,
   coverAll,
   findAllMelds,
+  bestPackingIncluding,
   meldPoints,
-  sumPenalty,
   tryCreateMeld,
   JokerSwap,
 } from "./melds";
@@ -33,6 +33,8 @@ export interface PlayerState {
   isBot: boolean;
   difficulty?: Difficulty;
   hand: Card[];
+  /** Jokers kept from the previous round — rejoin the next deal, no penalty. */
+  stash: Card[];
   melded: boolean;
   score: number;
   roundDelta: number;
@@ -48,7 +50,7 @@ export interface LogEntry {
 
 export interface RoundEndInfo {
   closedBy: number; // player index, -1 if no closer
-  fromHand: boolean;
+  jolly: boolean; // closed via Jolly Hand — everyone else counts double
   deltas: { id: number; points: number; doubled: boolean }[];
 }
 
@@ -60,6 +62,14 @@ export interface GameState {
   skipDraw: boolean; // předák's first turn (discard only)
   deck: Card[];
   discard: Card[];
+  /** Bottom card turned face up under the deck — Jolly Hand only. */
+  jollyCard: Card | null;
+  /** Discard-pile card taken this turn — must be laid before discarding. */
+  pendingLayId: number | null;
+  /** Joker taken from the table this turn — must be used before discarding. */
+  pendingJokerId: number | null;
+  /** Jolly Hand attempt in progress — the whole hand must be laid. */
+  jollyRush: boolean;
   melds: Meld[];
   round: number;
   dealer: number;
@@ -79,7 +89,8 @@ export type GameEvent =
   | { type: "layoff"; player: number }
   | { type: "swap"; player: number }
   | { type: "invalid"; message: string }
-  | { type: "close"; player: number; fromHand: boolean }
+  | { type: "close"; player: number; jolly: boolean; faceDown: boolean }
+  | { type: "jolly"; player: number }
   | { type: "roundEnd" }
   | { type: "reshuffle" }
   | { type: "gameEnd"; winner: number };
@@ -109,6 +120,7 @@ export function createGame(config: GameConfig): GameState {
       name: "Ty",
       isBot: false,
       hand: [],
+      stash: [],
       melded: false,
       score: 0,
       roundDelta: 0,
@@ -123,6 +135,7 @@ export function createGame(config: GameConfig): GameState {
       isBot: true,
       difficulty: config.difficulty,
       hand: [],
+      stash: [],
       melded: false,
       score: 0,
       roundDelta: 0,
@@ -138,6 +151,10 @@ export function createGame(config: GameConfig): GameState {
     skipDraw: false,
     deck: [],
     discard: [],
+    jollyCard: null,
+    pendingLayId: null,
+    pendingJokerId: null,
+    jollyRush: false,
     melds: [],
     round: 1,
     dealer: Math.floor(Math.random() * n),
@@ -153,6 +170,13 @@ export function createGame(config: GameConfig): GameState {
   return state;
 }
 
+/** True while the opening wait is in effect — nobody may lay cards yet. */
+export function meldsLocked(s: GameState): boolean {
+  return (
+    Math.floor(s.turnCount / s.players.length) < RULES.MELD_WAIT_ROUNDS
+  );
+}
+
 function dealRound(state: GameState): void {
   const n = state.players.length;
   state.deck = shuffle(buildDeck());
@@ -161,20 +185,53 @@ function dealRound(state: GameState): void {
   state.phase = "play";
   state.roundEndInfo = null;
   state.winner = null;
+  state.pendingLayId = null;
+  state.pendingJokerId = null;
+  state.jollyRush = false;
   for (const p of state.players) {
     p.hand = [];
     p.melded = false;
     p.roundDelta = 0;
   }
+  // Split: the player right of the dealer peeks at the bottom 3 cards and
+  // keeps a joker if there is one (receiving one less card in the deal).
+  const cutter = (state.dealer - 1 + n) % n;
+  let keptJoker: Card | null = null;
+  const peeked = state.deck.slice(0, 3).find((c) => c.joker);
+  if (peeked) {
+    keptJoker = peeked;
+    state.deck = state.deck.filter((c) => c.id !== peeked.id);
+  }
+  // The bottom-most card is turned face up under the deck (Jolly Hand only).
+  state.jollyCard = state.deck.shift() ?? null;
+  // 12 cards each; the cutter gets one less when holding a kept joker.
   for (let c = 0; c < RULES.HAND_SIZE; c++) {
-    for (const p of state.players) p.hand.push(state.deck.pop()!);
+    for (const p of state.players) {
+      if (p.id === cutter && keptJoker && c === RULES.HAND_SIZE - 1) continue;
+      p.hand.push(state.deck.pop()!);
+    }
+  }
+  if (keptJoker) state.players[cutter].hand.push(keptJoker);
+  // Jokers kept from the last round rejoin their owner's hand.
+  for (const p of state.players) {
+    if (p.stash.length > 0) {
+      p.hand.push(...p.stash);
+      p.stash = [];
+    }
   }
   const predak = (state.dealer + 1) % n;
-  state.players[predak].hand.push(state.deck.pop()!); // 15th card
+  state.players[predak].hand.push(state.deck.pop()!); // 13th card
   state.current = predak;
   state.turnCount = 0;
   state.turnPhase = "action";
   state.skipDraw = true;
+  if (keptJoker) {
+    pushLog(
+      state,
+      `${state.players[cutter].name} při snímání našel žolíka a nechává si ho.`,
+      "good"
+    );
+  }
   pushLog(
     state,
     `Kolo ${state.round} — ${state.players[predak].name} začíná a odhazuje kartu.`,
@@ -206,22 +263,45 @@ export function draw(state: GameState, from: "stock" | "discard"): ActionResult 
 
   if (from === "discard") {
     if (s.discard.length === 0) return invalid(state, "Hromádka je prázdná.");
+    if (meldsLocked(s))
+      return invalid(
+        state,
+        `Kartu z hromádky lze brát až po ${RULES.MELD_WAIT_ROUNDS}. kole — musí se hned vyložit.`
+      );
+    const top = s.discard[s.discard.length - 1];
+    // A discard-pile card must be laid immediately: it has to fit a table
+    // meld, or form a (first-)meld with cards in hand.
+    if (me.melded) {
+      if (!s.melds.some((m) => canAddToMeld(m, top) !== null))
+        return invalid(state, "Tuto kartu by nešlo hned vyložit.");
+    } else {
+      const pool = [...me.hand, top];
+      if (
+        !bestPackingIncluding(
+          pool,
+          true,
+          RULES.FIRST_MELD_POINTS,
+          pool.length - 1
+        )
+      )
+        return invalid(state, "Tuto kartu by nešlo hned vyložit.");
+    }
     const card = s.discard.pop()!;
     me.hand.push(card);
-    pushLog(s, `${me.name} si bere kartu z hromádky.`, "info");
+    s.pendingLayId = card.id;
+    pushLog(s, `${me.name} si bere kartu z hromádky (musí ji hned vyložit).`, "info");
   } else {
     if (s.deck.length === 0) {
-      // reshuffle discard (keep top card)
+      // overturn the discard pile WITHOUT shuffling and make it the deck
       if (s.discard.length <= 1) {
         // no cards left — round ends without a closer
         return endRound(s, -1, false, []);
       }
-      const top = s.discard.pop()!;
-      s.deck = shuffle(s.discard);
-      s.discard = [top];
+      s.deck = s.discard.slice().reverse();
+      s.discard = [];
       s.reshuffles++;
       events.push({ type: "reshuffle" });
-      pushLog(s, "Dobírací balíček byl obnoven z hromádky.", "info");
+      pushLog(s, "Hromádka byla bez míchání obrácena v balíček.", "info");
     }
     const card = s.deck.pop()!;
     me.hand.push(card);
@@ -232,6 +312,37 @@ export function draw(state: GameState, from: "stock" | "discard"): ActionResult 
 }
 
 /* ------------------------------------------------------------------ */
+/*  Jolly Hand — take the face-up bottom card and lay everything       */
+/* ------------------------------------------------------------------ */
+
+export function takeJolly(state: GameState): ActionResult {
+  if (state.phase !== "play") return invalid(state, "Hra neběží.");
+  if (state.turnPhase !== "draw") return invalid(state, "Už jsi táhl(a).");
+  if (state.skipDraw)
+    return invalid(state, "Pro zahájení kola odhoď jednu kartu.");
+  const me = state.players[state.current];
+  if (!state.jollyCard)
+    return invalid(state, "Pod balíčkem už žádná karta není.");
+  if (me.hand.length !== RULES.HAND_SIZE)
+    return invalid(state, "Jolly Hand jde jen se 12 kartami v ruce.");
+  if (!coverAll([...me.hand, state.jollyCard]))
+    return invalid(state, "S touto kartou by nešla vyložit celá ruka.");
+  const s = structuredClone(state);
+  const p = s.players[s.current];
+  const jc = s.jollyCard!;
+  s.jollyCard = null;
+  p.hand.push(jc);
+  s.turnPhase = "action";
+  s.jollyRush = true;
+  pushLog(
+    s,
+    `${p.name} bere JOLLY kartu a musí vyložit celou ruku!`,
+    "warn"
+  );
+  return { state: s, events: [{ type: "jolly", player: s.current }] };
+}
+
+/* ------------------------------------------------------------------ */
 /*  Lay a new meld (may contain multiple disjoint melds)               */
 /* ------------------------------------------------------------------ */
 
@@ -239,6 +350,11 @@ export function layMeld(state: GameState, cardIds: number[]): ActionResult {
   if (state.phase !== "play") return invalid(state, "Hra neběží.");
   if (state.turnPhase !== "action")
     return invalid(state, "Nejprve si táhni kartu.");
+  if (!state.jollyRush && meldsLocked(state))
+    return invalid(
+      state,
+      `Vykládat se smí až po ${RULES.MELD_WAIT_ROUNDS}. kole.`
+    );
   const me = state.players[state.current];
   const selected = me.hand.filter((c) => cardIds.includes(c.id));
   if (selected.length !== cardIds.length)
@@ -259,12 +375,16 @@ export function layMeld(state: GameState, cardIds: number[]): ActionResult {
   const wasMelded = p.melded;
   const newMelds = covered.map((m) => ({ ...m, owner: p.id }));
 
-  if (!wasMelded && !firstMeldOk(newMelds)) {
+  // A Jolly Hand lay bypasses the first-meld gate — the whole hand goes down.
+  if (!s.jollyRush && !wasMelded && !firstMeldOk(newMelds)) {
     return invalid(state, firstMeldProblem(newMelds) ?? "Neplatný první výklad.");
   }
 
   const ids = new Set(cardIds);
   p.hand = p.hand.filter((c) => !ids.has(c.id));
+  if (s.pendingLayId !== null && ids.has(s.pendingLayId)) s.pendingLayId = null;
+  if (s.pendingJokerId !== null && ids.has(s.pendingJokerId))
+    s.pendingJokerId = null;
   s.melds.push(...newMelds);
   p.melded = true;
   const pts = newMelds.reduce((a, m) => a + meldPoints(m), 0);
@@ -277,9 +397,9 @@ export function layMeld(state: GameState, cardIds: number[]): ActionResult {
   );
   const events: GameEvent[] = [{ type: "meld", player: s.current, points: pts }];
   if (p.hand.length === 0) {
-    return endRound(s, s.current, !wasMelded, [
+    return endRound(s, s.current, s.jollyRush, [
       ...events,
-      { type: "close", player: s.current, fromHand: !wasMelded },
+      { type: "close", player: s.current, jolly: s.jollyRush, faceDown: false },
     ]);
   }
   return { state: s, events };
@@ -297,9 +417,17 @@ export function layoff(
   if (state.phase !== "play") return invalid(state, "Hra neběží.");
   if (state.turnPhase !== "action")
     return invalid(state, "Nejprve si táhni kartu.");
+  if (!state.jollyRush && meldsLocked(state))
+    return invalid(
+      state,
+      `Přikládat se smí až po ${RULES.MELD_WAIT_ROUNDS}. kole.`
+    );
   const me = state.players[state.current];
-  if (!me.melded)
-    return invalid(state, "Nejprve musíš vyložit své kombinace (51 bodů).");
+  if (!me.melded && !state.jollyRush)
+    return invalid(
+      state,
+      `Nejprve musíš vyložit své kombinace (${RULES.FIRST_MELD_POINTS} bodů).`
+    );
   const card = me.hand.find((c) => c.id === cardId);
   if (!card) return invalid(state, "Karta není v ruce.");
   const meld = state.melds.find((m) => m.id === meldId);
@@ -312,6 +440,8 @@ export function layoff(
   const p = s.players[s.current];
   const m = s.melds.find((x) => x.id === meldId)!;
   p.hand = p.hand.filter((c) => c.id !== cardId);
+  if (s.pendingLayId === cardId) s.pendingLayId = null;
+  if (s.pendingJokerId === cardId) s.pendingJokerId = null;
   m.cards.push(placed);
   if (m.type === "run") {
     m.cards.sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0));
@@ -322,9 +452,9 @@ export function layoff(
   pushLog(s, `${p.name} přikládá kartu do kombinace.`, "info");
   const events: GameEvent[] = [{ type: "layoff", player: s.current }];
   if (p.hand.length === 0) {
-    return endRound(s, s.current, false, [
+    return endRound(s, s.current, s.jollyRush, [
       ...events,
-      { type: "close", player: s.current, fromHand: false },
+      { type: "close", player: s.current, jolly: s.jollyRush, faceDown: false },
     ]);
   }
   return { state: s, events };
@@ -343,6 +473,16 @@ export function swapJoker(
   if (state.phase !== "play") return invalid(state, "Hra neběží.");
   if (state.turnPhase !== "action")
     return invalid(state, "Nejprve si táhni kartu.");
+  if (!state.jollyRush && meldsLocked(state))
+    return invalid(
+      state,
+      `Žolíky se smí měnit až po ${RULES.MELD_WAIT_ROUNDS}. kole.`
+    );
+  if (
+    state.pendingJokerId !== null &&
+    state.players[state.current].hand.some((c) => c.id === state.pendingJokerId)
+  )
+    return invalid(state, "Nejprve využij vyměněného žolíka.");
   const me = state.players[state.current];
   const card = me.hand.find((c) => c.id === cardId);
   if (!card) return invalid(state, "Karta není v ruce.");
@@ -361,12 +501,17 @@ export function swapJoker(
   if (meld.type === "set") {
     if (card.rank !== meld.rank)
       return invalid(state, "Karta musí mít stejnou hodnotu.");
+    // a set releases its joker only once all 4 suits would be present
+    const nats = meld.cards.filter((c) => !c.joker);
     if (
-      meld.cards.some(
-        (c) => !c.joker && c.id !== jokerCardId && c.suit === card.suit
-      )
+      nats.length !== RULES.SET_MAX - 1 ||
+      new Set(nats.map((c) => c.suit)).size !== nats.length ||
+      nats.some((c) => c.suit === card.suit)
     )
-      return invalid(state, "Tato barva už v kombinaci je.");
+      return invalid(
+        state,
+        "Žolíka z trojice lze vzít, až když v ní budou všechny 4 barvy."
+      );
   } else {
     if (card.suit !== meld.suit)
       return invalid(state, "Karta musí být stejné barvy.");
@@ -391,7 +536,9 @@ export function swapJoker(
   }
   const jokerToHand: Card = { id: jc.id, suit: jc.suit, rank: jc.rank, joker: true };
   p.hand.push(jokerToHand);
-  pushLog(s, `${p.name} vyměňuje žolíka.`, "info");
+  // a joker taken from the table must be used before the turn ends
+  s.pendingJokerId = jokerToHand.id;
+  pushLog(s, `${p.name} vyměňuje žolíka (musí ho v tomto tahu využít).`, "info");
   return { state: s, events: [{ type: "swap", player: s.current }] };
 }
 
@@ -406,22 +553,37 @@ export function discard(state: GameState, cardId: number): ActionResult {
   const me = state.players[state.current];
   const card = me.hand.find((c) => c.id === cardId);
   if (!card) return invalid(state, "Karta není v ruce.");
+  if (state.jollyRush)
+    return invalid(state, "Jolly Hand: musíš vyložit všechny karty!");
+  if (
+    state.pendingLayId !== null &&
+    me.hand.some((c) => c.id === state.pendingLayId)
+  )
+    return invalid(state, "Kartu z hromádky musíš nejprve vyložit.");
+  if (
+    state.pendingJokerId !== null &&
+    me.hand.some((c) => c.id === state.pendingJokerId)
+  )
+    return invalid(state, "Vyměněného žolíka musíš v tomto tahu využít.");
 
   const s = structuredClone(state);
   const p = s.players[s.current];
   p.hand = p.hand.filter((c) => c.id !== cardId);
   s.discard.push(card);
   const events: GameEvent[] = [{ type: "discard", player: s.current, card }];
-  pushLog(s, `${p.name} odhazuje.`, "info");
 
   if (p.hand.length === 0) {
-    const fromHand = !p.melded;
-    return endRound(s, s.current, fromHand, [
+    // the closer dramatically discards the last card face down
+    pushLog(s, `${p.name} dramaticky odhazuje poslední kartu lícem dolů!`, "good");
+    return endRound(s, s.current, false, [
       ...events,
-      { type: "close", player: s.current, fromHand },
+      { type: "close", player: s.current, jolly: false, faceDown: true },
     ]);
   }
 
+  pushLog(s, `${p.name} odhazuje.`, "info");
+  s.pendingLayId = null;
+  s.pendingJokerId = null;
   s.skipDraw = false;
   s.current = (s.current + 1) % s.players.length;
   s.turnPhase = "draw";
@@ -436,39 +598,42 @@ export function discard(state: GameState, cardId: number): ActionResult {
 function endRound(
   s: GameState,
   closedBy: number,
-  fromHand: boolean,
+  jolly: boolean,
   events: GameEvent[]
 ): ActionResult {
   const deltas: RoundEndInfo["deltas"] = [];
   for (const p of s.players) {
-    let points = sumPenalty(p.hand);
-    const isCloser = closedBy >= 0 && p.id === closedBy;
-    if (fromHand && !isCloser) points *= 2;
-    if (isCloser) points = 0; // the closer counts nothing
+    // Jokers in hand are kept for the next round — no penalty.
+    const rest = p.hand.filter((c) => !c.joker);
+    p.stash.push(...p.hand.filter((c) => c.joker));
+    // -1 game point per card left in hand (-2 after a Jolly Hand).
+    // The closer laid everything down, so they count nothing.
+    const points = (jolly ? -2 : -1) * rest.length;
     p.roundDelta = points;
     p.score += points;
-    deltas.push({ id: p.id, points, doubled: fromHand && !isCloser });
+    deltas.push({ id: p.id, points, doubled: jolly && rest.length > 0 });
   }
   if (closedBy >= 0) {
     s.players[closedBy].closedRounds++;
     s.players[closedBy].roundDelta = 0;
     pushLog(
       s,
-      `${s.players[closedBy].name} zavírá${
-        fromHand ? " z ruky (dvojnásobné body!)" : ""
-      }!`,
+      jolly
+        ? `${s.players[closedBy].name} zavírá JOLLY HAND — ostatní počítají dvojnásobek!`
+        : `${s.players[closedBy].name} zavírá!`,
       "good"
     );
   } else {
     pushLog(s, "Karty došly — kolo končí bez zavření.", "warn");
   }
   s.phase = "roundEnd";
-  s.roundEndInfo = { closedBy, fromHand, deltas };
+  s.roundEndInfo = { closedBy, jolly, deltas };
   const newEvents: GameEvent[] = [...events, { type: "roundEnd" }];
-  if (s.players.some((p) => p.score >= s.target)) {
+  // Scores only go down — the match ends past -target, highest score wins.
+  if (s.players.some((p) => p.score <= -s.target)) {
     let bestIdx = 0;
     for (let i = 1; i < s.players.length; i++) {
-      if (s.players[i].score < s.players[bestIdx].score) bestIdx = i;
+      if (s.players[i].score > s.players[bestIdx].score) bestIdx = i;
     }
     s.winner = bestIdx;
     s.phase = "gameEnd";
@@ -502,17 +667,54 @@ export function rematch(config: GameConfig): GameState {
 export function sortHand(state: GameState): ActionResult {
   const s = structuredClone(state);
   const p = s.players[s.current];
-  // Suits grouped but ordered to alternate black/red (s=black, h=red,
-  // c=black, d=red) so the two red suits never sit side by side.
+  // Suits stay together; the suit blocks themselves are ordered so colors
+  // alternate as much as possible. A fixed s/h/c/d order fails when a suit
+  // is missing (e.g. spades + clubs with no hearts => black/black), so the
+  // present suits are permuted to minimize same-color block neighbors.
   const suitOrder = { s: 0, h: 1, c: 2, d: 3 } as const;
-  p.hand.sort((a, b) => {
-    if (a.joker && b.joker) return 0;
-    if (a.joker) return 1;
-    if (b.joker) return -1;
-    if (suitOrder[a.suit] !== suitOrder[b.suit])
-      return suitOrder[a.suit] - suitOrder[b.suit];
-    return a.rank - b.rank;
-  });
+  const isBlack = (suit: Card["suit"]) => suit === "s" || suit === "c";
+  const jokers = p.hand.filter((c) => c.joker);
+  const groups = new Map<Card["suit"], Card[]>();
+  for (const c of p.hand) {
+    if (c.joker) continue;
+    const g = groups.get(c.suit);
+    if (g) g.push(c);
+    else groups.set(c.suit, [c]);
+  }
+  for (const g of groups.values()) g.sort((a, b) => a.rank - b.rank);
+  const present = [...groups.keys()];
+  const score = (order: Card["suit"][]) => {
+    let n = 0;
+    for (let i = 1; i < order.length; i++)
+      if (isBlack(order[i]) === isBlack(order[i - 1])) n++;
+    return n;
+  };
+  const lexicSmaller = (a: Card["suit"][], b: Card["suit"][]) => {
+    for (let i = 0; i < a.length; i++) {
+      if (suitOrder[a[i]] !== suitOrder[b[i]])
+        return suitOrder[a[i]] < suitOrder[b[i]];
+    }
+    return false;
+  };
+  // Best of at most 4! = 24 orders; ties keep canonical s/h/c/d first.
+  let best = [...present].sort((a, b) => suitOrder[a] - suitOrder[b]);
+  const permute = (arr: Card["suit"][], i: number) => {
+    if (i === arr.length) {
+      if (
+        score(arr) < score(best) ||
+        (score(arr) === score(best) && lexicSmaller(arr, best))
+      )
+        best = [...arr];
+      return;
+    }
+    for (let j = i; j < arr.length; j++) {
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+      permute(arr, i + 1);
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+  };
+  permute([...present], 0);
+  p.hand = [...best.flatMap((suit) => groups.get(suit)!), ...jokers];
   return { state: s, events: [] };
 }
 

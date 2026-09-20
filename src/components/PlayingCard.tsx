@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { CSSProperties, MouseEvent as ReactMouseEvent, useMemo } from "react";
+import { CSSProperties, MouseEvent as ReactMouseEvent, useMemo, useState } from "react";
 import {
   Card,
   Suit,
@@ -42,6 +42,8 @@ interface PlayingCardProps {
   asSuit?: Suit;
   /** scopes layoutId so cards from previous rounds don't hijack animations */
   prefix?: string;
+  /** render without any entrance/layout animation (e.g. static previews) */
+  noAnim?: boolean;
   onClick?: (e: ReactMouseEvent<HTMLDivElement>) => void;
   className?: string;
   style?: CSSProperties;
@@ -61,20 +63,25 @@ export default function PlayingCard({
   asRank,
   asSuit,
   prefix = "",
+  noAnim = false,
   onClick,
   className = "",
   style,
 }: PlayingCardProps) {
   const spec = CARD_SIZES[size];
+  // Hovered card jumps above everything (incl. selected cards at z 50)
+  // so it stays fully visible in the overlapping fan.
+  const [hovered, setHovered] = useState(false);
+  const front = hoverable && hovered;
 
   const wrapperStyle: CSSProperties = useMemo(
     () => ({
       width: spec.w,
       aspectRatio: "5 / 7",
-      zIndex,
+      zIndex: front ? 100 : zIndex,
       ...style,
     }),
-    [spec.w, zIndex, style]
+    [spec.w, zIndex, front, style]
   );
 
   const isReplacedJoker = card.joker && asRank !== undefined;
@@ -102,11 +109,11 @@ export default function PlayingCard({
 
   return (
     <motion.div
-      layout
-      layoutId={`${prefix}card-${card.id}`}
-      initial={{ y: -140, opacity: 0, rotate: -12, scale: 0.6 }}
+      layout={!noAnim}
+      layoutId={noAnim ? undefined : `${prefix}card-${card.id}`}
+      initial={noAnim ? false : { y: -140, opacity: 0, rotate: -12, scale: 0.6 }}
       animate={{ y: lifted ? -16 : 0, opacity: dimmed ? 0.45 : 1, rotate: 0, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.5 }}
+      exit={noAnim ? undefined : { opacity: 0, scale: 0.5 }}
       transition={{
         type: "spring",
         stiffness: 320,
@@ -123,13 +130,16 @@ export default function PlayingCard({
             ? "playing-card joker-card"
             : `playing-card ${red ? "red-suit" : ""}`,
         selected ? "card-selected" : "",
+        isReplacedJoker ? "joker-placed" : "",
         hoverable ? "card-hoverable" : "",
         target ? "card-layoff-target" : "",
         className,
       ].join(" ")}
       onClick={onClick}
-      whileHover={hoverable ? { y: -14, scale: 1.03 } : undefined}
-      whileTap={onClick ? { scale: 0.95 } : undefined}
+      onHoverStart={() => setHovered(true)}
+      onHoverEnd={() => setHovered(false)}
+      whileHover={!noAnim && hoverable ? { y: -14, scale: 1.03 } : undefined}
+      whileTap={!noAnim && onClick ? { scale: 0.95 } : undefined}
     >
       {faceDown ? (
         <div className="absolute inset-0 flex items-center justify-center">

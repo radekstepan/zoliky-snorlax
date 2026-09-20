@@ -79,7 +79,9 @@ function tryMakeRun(cards: Card[]): Meld | null {
   const ranks = new Set(naturals.map((c) => c.rank));
   if (ranks.size !== naturals.length) return null; // distinct ranks only
 
-  let best: { lo: number; ends: number } | null = null;
+  // Candidate windows, best first (jokers at the ends, then higher).
+  // Windows where two jokers would sit side by side are illegal.
+  const cands: { lo: number; ends: number }[] = [];
   for (let lo = 1; lo <= 15 - n; lo++) {
     const hi = lo + n - 1;
     let ok = true;
@@ -94,20 +96,27 @@ function tryMakeRun(cards: Card[]): Meld | null {
       }
     }
     if (!ok) continue;
-    // prefer windows where jokers sit at the ends, then higher windows
     const filled = new Set<number>();
     for (const c of naturals) {
       if (c.rank === ACE) filled.add(lo <= 1 && 1 <= hi ? 1 : 14);
       else filled.add(c.rank);
     }
+    const missing: number[] = [];
+    for (let s = lo; s <= hi; s++) if (!filled.has(s)) missing.push(s);
+    // two jokers may never sit next to each other
+    let adjacent = false;
+    for (let i = 1; i < missing.length; i++) {
+      if (missing[i] === missing[i - 1] + 1) { adjacent = true; break; }
+    }
+    if (adjacent) continue;
     let ends = 0;
     for (let s = lo; s <= hi; s++) {
       if (!filled.has(s) && (s === lo || s === hi)) ends++;
     }
-    if (!best || ends > best.ends || (ends === best.ends && lo > best.lo)) {
-      best = { lo, ends };
-    }
+    cands.push({ lo, ends });
   }
+  cands.sort((a, b) => b.ends - a.ends || b.lo - a.lo);
+  const best = cands[0] ?? null;
   if (!best) return null;
 
   const lo = best.lo;
@@ -145,12 +154,17 @@ export function canAddToMeld(meld: Meld, card: Card): PlacedCard | null {
       if (joks + 1 >= nats) return null;
       return { ...card, jokerAs: meld.rank! };
     }
-    // run: extend right if possible, else left
+    // run: extend right if possible, else left (never next to another joker)
     const len = meld.cards.length;
     if (len >= 13) return null; // full A..K — cannot be extended
     const hi = meld.lo + len - 1;
-    if (hi < 14) return { ...card, jokerAs: hi + 1, slot: hi + 1 };
-    if (meld.lo > 1) return { ...card, jokerAs: meld.lo - 1, slot: meld.lo - 1 };
+    const bySlot = new Map(meld.cards.map((c) => [c.slot, c]));
+    if (hi < 14 && !bySlot.get(hi)?.joker) {
+      return { ...card, jokerAs: hi + 1, slot: hi + 1 };
+    }
+    if (meld.lo > 1 && !bySlot.get(meld.lo)?.joker) {
+      return { ...card, jokerAs: meld.lo - 1, slot: meld.lo - 1 };
+    }
     return null;
   }
 
@@ -206,7 +220,12 @@ export function findJokerSwap(
         if (c.joker) continue;
         if (meld.type === "set") {
           if (c.rank !== meld.rank) continue;
-          if (meld.cards.some((x) => !x.joker && x.suit === c.suit)) continue;
+          // a set only releases its joker once all 4 suits are present:
+          // exactly 3 distinct natural suits + the replacement completes them
+          const nats = meld.cards.filter((x) => !x.joker);
+          if (nats.length !== RULES.SET_MAX - 1) continue;
+          if (new Set(nats.map((x) => x.suit)).size !== nats.length) continue;
+          if (nats.some((x) => x.suit === c.suit)) continue;
           return { meldId: meld.id, jokerCardId: mc.id, replacement: c, as };
         }
         // run
@@ -241,7 +260,7 @@ export function applyJokerSwap(meld: Meld, swap: JokerSwap): Meld {
 }
 
 /* ------------------------------------------------------------------ */
-/*  First-meld gate: 51 points + one clean run                         */
+/*  First-meld gate: 36 points + one clean run                         */
 /* ------------------------------------------------------------------ */
 
 export function firstMeldOk(melds: Meld[]): boolean {
@@ -369,9 +388,74 @@ export function bestPacking(
   };
 }
 
-/** Find a first-meld packing meeting 51 + clean run. */
+/** Find a first-meld packing meeting 36 + clean run. */
 export function findFirstMeld(hand: Card[]): Packing | null {
   return bestPacking(hand, true, RULES.FIRST_MELD_POINTS);
+}
+
+/**
+ * Best disjoint packing that MUST use the card at hand index mustIdx
+ * (e.g. a discard-pile card that has to be laid immediately, or a joker
+ * taken from the table that has to be used this turn).
+ */
+export function bestPackingIncluding(
+  hand: Card[],
+  requireClean: boolean,
+  minPoints: number,
+  mustIdx: number
+): Packing | null {
+  const mustBit = 1 << mustIdx;
+  const cands = findAllMelds(hand).filter((c) => c.mask & mustBit);
+  if (cands.length === 0) return null;
+  const n = hand.length;
+  const size = 1 << n;
+  const dp = new Int16Array(size).fill(-1);
+  const hasClean = new Uint8Array(size);
+  const pick = new Int32Array(size).fill(-1);
+  dp[0] = 0;
+  for (let mask = 0; mask < size; mask++) {
+    if (dp[mask] < 0) continue;
+    for (const cand of cands) {
+      if (mask & cand.mask) continue;
+      const next = mask | cand.mask;
+      const pts = dp[mask] + cand.points;
+      const clean = hasClean[mask] || (cand.clean ? 1 : 0);
+      if (pts > dp[next] || (pts === dp[next] && clean > hasClean[next])) {
+        dp[next] = pts;
+        hasClean[next] = clean;
+        pick[next] = mask;
+      }
+    }
+  }
+  // NOTE: masks that avoid mustIdx are unreachable here — every candidate
+  // carries mustBit, so any reachable nonzero mask includes it.
+  let bestMask = -1;
+  let bestPts = -1;
+  for (let mask = 0; mask < size; mask++) {
+    if (!(mask & mustBit)) continue;
+    if (dp[mask] < minPoints) continue;
+    if (requireClean && !hasClean[mask]) continue;
+    if (dp[mask] > bestPts) {
+      bestPts = dp[mask];
+      bestMask = mask;
+    }
+  }
+  if (bestMask < 0) return null;
+  const masks: number[] = [];
+  let cur = bestMask;
+  while (cur > 0) {
+    const prev = pick[cur];
+    if (prev < 0) break;
+    masks.push(cur ^ prev);
+    cur = prev;
+  }
+  const melds = masks.map((m) => cands.find((c) => c.mask === m)!.meld);
+  return {
+    masks,
+    points: bestPts,
+    clean: hasClean[bestMask] === 1,
+    melds,
+  };
 }
 
 /**

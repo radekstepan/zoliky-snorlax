@@ -52,19 +52,28 @@ export const rankLabel = (r: number): string =>
 export const cardName = (c: Card): string =>
   c.joker ? "Žolík" : `${rankLabel(c.rank)} ${SUIT_SYMBOL[c.suit]}`;
 
-/** Penalty value of a card left in hand at the end of a round. */
+/**
+ * Heuristic weight of a card (high cards are good discard candidates).
+ * Not used for round scoring — rounds score -1 per card (-2 for Jolly Hand).
+ */
 export const penaltyValue = (c: Card): number => {
   if (c.joker) return 50;
   if (c.rank >= 10) return 10; // 10, J, Q, K, A
   return c.rank;
 };
 
-/** Value used for the 51-point first-meld threshold. */
+/**
+ * Value used for the 36-point first-meld threshold.
+ * A Low Ace (slot 1, as in A-2-3) counts 1; a High Ace (slot 14) counts 10.
+ * A joker counts as the card it stands in for.
+ */
 export const meldValue = (c: PlacedCard): number => {
   if (c.joker) {
     const as = c.jokerAs ?? 14;
+    if (as === 1) return 1;
     return as >= 10 ? 10 : as;
   }
+  if (c.rank === ACE && c.slot === 1) return 1;
   return penaltyValue(c);
 };
 
@@ -104,12 +113,13 @@ export function shuffle<T>(arr: T[]): T[] {
 
 export const RULES = {
   TARGET_SCORE: 300,
-  FIRST_MELD_POINTS: 51,
-  HAND_SIZE: 14,
+  FIRST_MELD_POINTS: 36,
+  HAND_SIZE: 12,
   SET_MIN: 3,
   SET_MAX: 4,
   RUN_MIN: 3,
-  JOKER_PENALTY: 50,
+  /** Full table rounds that must pass before anyone may lay cards. */
+  MELD_WAIT_ROUNDS: 3,
 } as const;
 
 export const BOT_NAMES = ["Karel", "Jana", "Pepa", "Eva", "Míra", "Alena"];

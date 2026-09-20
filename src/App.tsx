@@ -4,6 +4,7 @@ import {
   GameState,
   ActionResult,
   draw,
+  takeJolly,
   layMeld,
   layoff,
   swapJoker,
@@ -13,7 +14,8 @@ import {
   createGame,
   GameEvent,
 } from "./game/engine";
-import { Meld, bestPacking, findFirstMeld, findJokerSwap } from "./game/melds";
+import { Meld, bestPacking, bestPackingIncluding, coverAll, findFirstMeld, findJokerSwap } from "./game/melds";
+import { RULES } from "./game/core";
 import { planBotTurn, BotAction } from "./game/bot";
 import { sfx } from "./game/sounds";
 import Board from "./components/Board";
@@ -103,13 +105,19 @@ export default function App() {
             sfx.close();
             const name = game.players[e.player].name;
             toast(
-              e.fromHand
-                ? `${name} zavírá Z RUKY — dvojnásobné body!`
-                : `${name} zavírá kolo!`,
+              e.jolly
+                ? `${name} zavírá JOLLY HAND — dvojnásobné body!`
+                : e.faceDown
+                  ? `${name} zavírá poslední kartou lícem dolů!`
+                  : `${name} zavírá kolo!`,
               "good"
             );
             break;
           }
+          case "jolly":
+            sfx.swap();
+            toast(`${game.players[e.player].name} bere JOLLY kartu!`, "info");
+            break;
           case "roundEnd":
             sfx.roundEnd();
             break;
@@ -119,7 +127,7 @@ export default function App() {
             break;
           case "reshuffle":
             sfx.reshuffle();
-            toast("Balíček byl obnoven z hromádky.", "info");
+            toast("Hromádka byla bez míchání obrácena v balíček.", "info");
             break;
         }
       }
@@ -134,6 +142,8 @@ export default function App() {
     switch (a.kind) {
       case "draw":
         return a.from === "discard" ? `${name} si bere z hromádky…` : `${name} si bere kartu…`;
+      case "jolly":
+        return `${name} bere JOLLY kartu…`;
       case "meld":
         return `${name} vykládá…`;
       case "layoff":
@@ -149,6 +159,8 @@ export default function App() {
     switch (a.kind) {
       case "draw":
         return draw(state, a.from);
+      case "jolly":
+        return takeJolly(state);
       case "meld":
         return layMeld(state, a.cardIds);
       case "layoff":
@@ -375,9 +387,49 @@ export default function App() {
     sfx.click();
   };
 
+  const doTakeJolly = () => {
+    if (!game || !humanTurn) return;
+    const res = takeJolly(game);
+    if (!res.events.some((e) => e.type === "invalid")) {
+      setSelected([]);
+      setGame(res.state);
+    }
+    handleEvents(res.events);
+  };
+
   const doHint = () => {
     if (!game || !humanTurn || game.turnPhase !== "action") return;
     const me = game.players[0];
+    // Jolly rush: the whole hand must go down at once.
+    if (game.jollyRush) {
+      if (coverAll(me.hand)) {
+        setSelected(me.hand.map((c) => c.id));
+        sfx.click();
+      } else {
+        toast("Celou ruku s touto kartou vyložit nejde.", "bad");
+      }
+      return;
+    }
+    // A taken pile card / swapped joker must be used — suggest that packing.
+    const mustId =
+      game.pendingLayId !== null && me.hand.some((c) => c.id === game.pendingLayId)
+        ? game.pendingLayId
+        : game.pendingJokerId !== null && me.hand.some((c) => c.id === game.pendingJokerId)
+          ? game.pendingJokerId
+          : null;
+    if (mustId !== null) {
+      const idx = me.hand.findIndex((c) => c.id === mustId);
+      const packing = me.melded
+        ? bestPackingIncluding(me.hand, false, 0, idx)
+        : bestPackingIncluding(me.hand, true, RULES.FIRST_MELD_POINTS, idx);
+      if (packing && packing.melds.length > 0) {
+        setSelected(packing.melds.flatMap((m) => m.cards.map((c) => c.id)));
+        sfx.click();
+      } else {
+        toast("Tuto kartu teď vyložit nejde.", "bad");
+      }
+      return;
+    }
     const packing = me.melded
       ? bestPacking(me.hand, false, 0)
       : findFirstMeld(me.hand);
@@ -436,6 +488,7 @@ export default function App() {
           selected={selected}
           onToggleCard={toggleCard}
           onDraw={doDraw}
+          onTakeJolly={doTakeJolly}
           onLay={doLay}
           onDiscard={doDiscard}
           onSort={doSort}

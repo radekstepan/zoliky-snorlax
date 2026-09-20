@@ -162,7 +162,7 @@ export function StartScreen({
         </div>
 
         <div>
-          <div className="panel-title mb-2">Cíl hry (trestné body)</div>
+          <div className="panel-title mb-2">Cíl hry (minusové body — přežij nad limitem)</div>
           <div className="flex gap-2">
             {[200, 300, 500].map((t) => (
               <SegButton key={t} active={config.target === t} onClick={() => setConfig({ ...config, target: t })} color="pink">
@@ -183,7 +183,7 @@ export function StartScreen({
       </motion.div>
 
       <div className="font-pixel text-[6.5px] opacity-40 mt-5 text-center leading-relaxed">
-        2 BALÍČKY + 4 ŽOLÍCI · PRVNÍ VÝKLAD {RULES.FIRST_MELD_POINTS} BODŮ + ČISTÁ POSTUPKA
+        2 BALÍČKY + 4 ŽOLÍCI · PRVNÍ VÝKLAD {RULES.FIRST_MELD_POINTS} BODŮ + ČISTÁ POSTUPKA · -1 BOD ZA KARTU
       </div>
     </div>
   );
@@ -214,46 +214,55 @@ export function RulesModal({ onClose }: { onClose: () => void }) {
 
       <RuleSection title="Cíl hry">
         <p>
-          Cílem je zbavit se všech karet z ruky skládáním postupek, trojic a čtveřic. Na
-          konci každého kola se počítají trestné body za karty, které zůstaly v ruce.
-          Vítězí hráč s nejnižším počtem bodů ve chvíli, kdy někdo dosáhne cílové hranice.
+          Cílem je zbavit se všech karet z ruky skládáním postupek, trojic a čtveřic.
+          Kolo končí, když má hráč na konci tahu jedinou kartu a dramaticky ji odhodí{" "}
+          <b>lícem dolů</b>. Ostatní pak dostanou <b>−1 bod za každou kartu v ruce</b>.
+          Skóre jen klesá — hra končí, když někdo spadne pod cílovou hranici, a{" "}
+          <b>vítězí hráč s nejvyšším (nejméně záporným) skóre</b>.
         </p>
       </RuleSection>
 
       <RuleSection title="Karty a rozdání">
         <p>
           Hraje se se <b>dvěma francouzskými balíčky</b> (2 × 52 karet) a <b>čtyřmi žolíky</b> —
-          celkem 108 karet. Každý hráč dostane <b>14 karet</b>, předák (hráč po levici
+          celkem 108 karet. Každý hráč dostane <b>12 karet</b>, předák (hráč po levici
           rozdávajícího) o jednu navíc a hru zahajuje odhozením karty.
+        </p>
+        <p>
+          Hráč po pravici rozdávajícího snímá: koukne na <b>spodní 3 karty</b>, najde-li
+          žolíka, nechá si ho (a dostane o kartu méně). Spodní karta balíčku se pak otočí{" "}
+          <b>lícem nahoru pod balíček</b> — slouží jen pro Jolly Hand.
         </p>
       </RuleSection>
 
       <RuleSection title="Průběh tahu">
-        <p>1. <b>Táhnutí</b> — hráč si vezme kartu z dobíracího balíčku, nebo vrchní kartu z hromádky.</p>
-        <p>2. <b>Vykládání</b> — pokud může, vyloží kombinace, přikládá k výkladům nebo vymění žolíka.</p>
+        <p>1. <b>Táhnutí</b> — kartu z balíčku, vrchní kartu z hromádky (musí se <b>hned vyložit</b>), nebo spodní kartu při Jolly Hand.</p>
+        <p>2. <b>Vykládání</b> — až po {RULES.MELD_WAIT_ROUNDS}. kole: kombinace, přikládání, výměna žolíka.</p>
         <p>3. <b>Odhození</b> — tah končí odhozením jedné karty na hromádku.</p>
       </RuleSection>
 
       <RuleSection title="Kombinace">
         <p>
           <b>Postupka</b> — alespoň 3 po sobě jdoucí karty stejné barvy (např. ♥7, ♥8, ♥9).
-          Eso může být nejnižší (A,2,3) i nejvyšší (Q,K,A).
+          Eso může být nejnižší (A,2,3) i nejvyšší (Q,K,A), ale nikdy <b>„za rohem“</b> (K,A,2 neplatí).
         </p>
         <p>
           <b>Trojice / čtveřice</b> — 3 až 4 karty stejné hodnoty, každá jiné barvy.
         </p>
         <p>
-          <b>Žolík</b> nahrazuje libovolnou kartu. V kombinaci smí být žolíků méně než
-          ostatních karet.
+          <b>Žolík</b> nahrazuje libovolnou kartu, ale kombinace s žolíkem není „čistá“.
+          V kombinaci smí být žolíků méně než ostatních karet a <b>dva žolíci nesmí ležet vedle sebe</b>.
         </p>
       </RuleSection>
 
-      <RuleSection title="První výklad — 51 bodů + čistá postupka">
+      <RuleSection title="První výklad — 36 bodů + čistá postupka">
         <p>
           Při prvním vyložení musí mít hráč kombinace v součtu alespoň{" "}
           <b>{RULES.FIRST_MELD_POINTS} bodů</b> a součástí musí být alespoň jedna{" "}
           <b>čistá postupka</b> (postupka bez žolíka). Body: 2–10 = hodnota karty,
-          J/Q/K/A = 10 bodů, žolík = hodnota karty, kterou nahrazuje.
+          J/Q/K = 10, eso nízké (A,2,3) = <b>1 bod</b> (např. A♥,2♥,3♥ = 6 bodů),
+          eso vysoké (Q,K,A) = 10, žolík = hodnota karty, kterou nahrazuje
+          (např. 7♠,8♠,🃏,10♠,J♠ = 44 bodů).
         </p>
       </RuleSection>
 
@@ -261,23 +270,29 @@ export function RulesModal({ onClose }: { onClose: () => void }) {
         <p>
           Vyložený hráč může <b>přikládat</b> karty do kterékoliv kombinace na stole.
           Pokud v kombinaci leží žolík, může ho kterýkoliv hráč <b>vyměnit</b> za skutečnou
-          kartu, kterou žolík zastupuje — žolík mu pak putuje do ruky.
+          kartu, kterou žolík zastupuje — ale vyměněného žolíka musí <b>v tom samém tahu využít</b>.
+          Žolíka z trojice lze vzít, až když v ní budou <b>všechny 4 barvy</b>.
         </p>
       </RuleSection>
 
-      <RuleSection title="Zavření kola">
+      <RuleSection title="Jolly Hand">
         <p>
-          Kolo končí, když hráč odhodí poslední kartu. Pokud zavírá hráč, který se v tom
-          kole vůbec nevyložil, jde o zavření <b>„z ruky“</b> a ostatní hráči počítají{" "}
-          <b>dvojnásobek</b> trestných bodů.
+          Kdo má v ruce stále <b>12 karet</b>, může si místo táhnutí vzít spodní kartu
+          pod balíčkem — ale v tom tahu <b>musí vyložit celou ruku a kolo zavřít</b>.
+          Ostatním se pak počítá <b>−2 body za každou kartu v ruce</b>. Vzácné, ale dramatické…
         </p>
       </RuleSection>
 
-      <RuleSection title="Bodování a konec hry">
+      <RuleSection title="Žolíci do příštího kola">
         <p>
-          Za karty v ruce na konci kola: 2–10 = hodnota karty, J/Q/K/A = 10,{" "}
-          <b>žolík = {RULES.JOKER_PENALTY} bodů</b>. Body se sčítají. Hra končí, když
-          někdo dosáhne cílové hranice — <b>vítězí hráč s nejnižším počtem bodů</b>.
+          Žolíky v ruce na konci kola <b>nemusíš vykládat</b> — nepočítají se do bodů
+          a schováš si je do příštího kola.
+        </p>
+      </RuleSection>
+
+      <RuleSection title="Dojde-li balíček">
+        <p>
+          Hromádka se <b>bez míchání obrátí</b> a stane se novým balíčkem.
         </p>
       </RuleSection>
 
@@ -285,8 +300,9 @@ export function RulesModal({ onClose }: { onClose: () => void }) {
         <p>· Kliknutím kartu vybereš, dalším kliknutím výběr zrušíš.</p>
         <p>· <b>VYLOŽIT</b> — vyloží všechny vybrané karty jako kombinace.</p>
         <p>· S jednou vybranou kartou klikni na kombinaci na stole — přiložíš ji.</p>
-        <p>· S vybranou kartou klikni na žolíka ve výkladu — vyměníš ho.</p>
+        <p>· S vybranou kartou klikni na žolíka ve výkladu — vyměníš ho (a hned ho využij).</p>
         <p>· <b>ODHODIT</b> — odhodí vybranou kartu. <b>RADCE</b> ti navrhne kombinaci.</p>
+        <p>· <b>JOLLY HAND</b> — vezme spodní kartu, když s ní jde vyložit celá ruka.</p>
       </RuleSection>
     </ModalShell>
   );
@@ -315,8 +331,8 @@ export function RoundEndModal({
             <>
               <span className={closer.id === 0 ? "neon-green" : "neon-blue"}>{closer.name}</span>
               {" "}zavírá
-              {info.fromHand ? (
-                <span className="neon-pink"> Z RUKY — DVOJNÁSOBNÉ BODY!</span>
+              {info.jolly ? (
+                <span className="neon-pink"> JOLLY HAND — DVOJNÁSOBNÉ BODY!</span>
               ) : (
                 "!"
               )}
@@ -329,7 +345,7 @@ export function RoundEndModal({
 
       <div className="space-y-1.5 mb-5">
         {[...state.players]
-          .sort((a, b) => a.roundDelta - b.roundDelta)
+          .sort((a, b) => b.roundDelta - a.roundDelta)
           .map((p) => (
             <div
               key={p.id}
@@ -349,11 +365,11 @@ export function RoundEndModal({
               <span className="font-pixel text-[7px] opacity-60">{p.hand.length} karet v ruce</span>
               <span
                 className={`font-pixel text-[11px] w-16 text-right ${
-                  p.roundDelta > 0 ? "text-neon-pink" : "neon-green"
+                  p.roundDelta < 0 ? "text-neon-pink" : "neon-green"
                 }`}
               >
                 {info.deltas.find((d) => d.id === p.id)?.doubled ? "2× " : ""}
-                +{p.roundDelta}
+                {p.roundDelta}
               </span>
               <span className="font-pixel text-[10px] neon-gold w-14 text-right">{p.score}</span>
             </div>
@@ -400,7 +416,7 @@ export function GameEndModal({
 
       <div className="space-y-1.5 mb-5">
         {[...state.players]
-          .sort((a, b) => a.score - b.score)
+          .sort((a, b) => b.score - a.score)
           .map((p, i) => (
             <div
               key={p.id}

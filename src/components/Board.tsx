@@ -1,8 +1,8 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useMemo, useRef } from "react";
-import { GameState } from "../game/engine";
-import { Meld, canAddToMeld, findJokerSwap, meldPoints, isCleanRun } from "../game/melds";
-import { Card } from "../game/core";
+import { GameState, meldsLocked } from "../game/engine";
+import { Meld, canAddToMeld, coverAll, findJokerSwap, meldPoints, isCleanRun } from "../game/melds";
+import { Card, RULES } from "../game/core";
 import PlayingCard, { CARD_SIZES } from "./PlayingCard";
 
 interface BoardProps {
@@ -13,6 +13,7 @@ interface BoardProps {
   selected: number[];
   onToggleCard: (id: number) => void;
   onDraw: (from: "stock" | "discard") => void;
+  onTakeJolly: () => void;
   onLay: () => void;
   onDiscard: () => void;
   onSort: () => void;
@@ -126,6 +127,7 @@ function MeldView({ meld, ownerHue, ownerName, interactive, targetable, swapJoke
               key={c.id}
               card={c}
               prefix={prefix}
+              noAnim={c.joker && c.jokerAs !== undefined}
               size={size}
               asRank={c.joker && c.jokerAs !== undefined ? c.jokerAs : undefined}
               asSuit={c.joker && c.jokerAs !== undefined && isRun ? meld.suit : undefined}
@@ -156,11 +158,15 @@ function Piles({
   humanTurn,
   prefix,
   onDraw,
+  onTakeJolly,
+  canJolly,
 }: {
   state: GameState;
   humanTurn: boolean;
   prefix: string;
   onDraw: (from: "stock" | "discard") => void;
+  onTakeJolly: () => void;
+  canJolly: boolean;
 }) {
   const canDraw = humanTurn && state.turnPhase === "draw" && !state.skipDraw && state.phase === "play";
   const top = state.discard[state.discard.length - 1];
@@ -207,6 +213,26 @@ function Piles({
           )}
         </motion.button>
         <span className="font-pixel text-[7px] opacity-60">BALÍČEK · {state.deck.length}</span>
+        {/* face-up bottom card — Jolly Hand only */}
+        {state.jollyCard && (
+          <div className="flex flex-col items-center gap-1 mt-1">
+            <div
+              className="rounded-md overflow-hidden border border-neon-gold/50"
+              style={{ filter: canJolly ? "drop-shadow(0 0 10px rgba(255,211,25,0.5))" : "opacity(0.55)" }}
+              title="Spodní karta — jen pro Jolly Hand"
+            >
+              <PlayingCard card={state.jollyCard} size="sm" noAnim />
+            </div>
+            <button
+              type="button"
+              onClick={onTakeJolly}
+              disabled={!canJolly}
+              className="btn-arcade btn-gold px-2 py-1.5 text-[7px]"
+            >
+              JOLLY HAND
+            </button>
+          </div>
+        )}
       </div>
 
       {/* discard */}
@@ -257,6 +283,7 @@ export default function Board({
   selected,
   onToggleCard,
   onDraw,
+  onTakeJolly,
   onLay,
   onDiscard,
   onSort,
@@ -283,14 +310,26 @@ export default function Board({
   roundRef.current = state.round;
   const prefix = `g${animKey}-`;
 
+  const canJolly = useMemo(() => {
+    if (!humanTurn || state.phase !== "play") return false;
+    if (state.turnPhase !== "draw" || state.skipDraw) return false;
+    if (!state.jollyCard || human.hand.length !== RULES.HAND_SIZE) return false;
+    return coverAll([...human.hand, state.jollyCard]) !== null;
+  }, [humanTurn, state, human.hand]);
+
   const status = (() => {
     if (state.phase !== "play") return { title: "", sub: "", cls: "" };
     if (!humanTurn) {
       const bot = state.players[state.current];
       return { title: `${bot.name}`, sub: thinkingBot !== null ? stepText || "přemýšlí…" : "čekej…", cls: "neon-pink" };
     }
+    if (state.jollyRush) return { title: "JOLLY HAND!", sub: "musíš vyložit celou ruku najednou", cls: "neon-gold" };
     if (state.skipDraw) return { title: "ODHOĎ KARTU", sub: "začínáš kolo jako předák", cls: "neon-gold" };
-    if (state.turnPhase === "draw") return { title: "TÁHNI SI", sub: "balíček nebo vrchní karta z hromádky", cls: "neon-blue" };
+    if (state.turnPhase === "draw") return { title: "TÁHNI SI", sub: "balíček, hromádka (hned vyložit) nebo JOLLY", cls: "neon-blue" };
+    if (state.pendingLayId !== null && human.hand.some((c) => c.id === state.pendingLayId))
+      return { title: "VYLOŽ KARTU", sub: "kartu z hromádky musíš hned vyložit", cls: "neon-gold" };
+    if (state.pendingJokerId !== null && human.hand.some((c) => c.id === state.pendingJokerId))
+      return { title: "VYUŽIJ ŽOLÍKA", sub: "vyměněného žolíka musíš v tomto tahu využít", cls: "neon-gold" };
     return { title: "JSI NA ŘADĚ", sub: "vylož kombinaci, přilož, vyměň žolíka nebo odhoď", cls: "neon-green" };
   })();
 
@@ -344,7 +383,7 @@ export default function Board({
       {/* center: piles + status + log + table melds */}
       <div className="flex-1 min-h-0 px-3 sm:px-5 py-2 flex flex-col lg:flex-row gap-3">
         <div className="flex lg:flex-col items-center justify-center gap-3 lg:gap-2 lg:w-72 shrink-0">
-          <Piles state={state} humanTurn={humanTurn} prefix={prefix} onDraw={onDraw} />
+          <Piles state={state} humanTurn={humanTurn} prefix={prefix} onDraw={onDraw} onTakeJolly={onTakeJolly} canJolly={canJolly} />
           <AnimatePresence mode="wait">
             <motion.div
               key={state.current + "-" + state.turnPhase + "-" + (thinkingBot ?? "x")}
@@ -377,12 +416,18 @@ export default function Board({
         <div className="flex-1 min-h-0 panel p-3 overflow-y-auto pixel-scroll">
           <div className="flex items-center justify-between mb-2">
             <span className="panel-title">Výklady na stole</span>
-            <span className="font-pixel text-[7px] opacity-50">{state.melds.length} kombinací</span>
+            {state.phase === "play" && meldsLocked(state) ? (
+              <span className="font-pixel text-[7px] px-1.5 py-0.5 rounded bg-neon-gold/20 text-neon-gold border border-neon-gold/40">
+                VYKLÁDÁNÍ AŽ PO {RULES.MELD_WAIT_ROUNDS}. KOLE
+              </span>
+            ) : (
+              <span className="font-pixel text-[7px] opacity-50">{state.melds.length} kombinací</span>
+            )}
           </div>
           {state.melds.length === 0 ? (
             <div className="h-full min-h-[80px] flex items-center justify-center border-2 border-dashed border-white/10 rounded-lg">
               <span className="font-pixel text-[8px] opacity-40 text-center leading-relaxed">
-                Zatím žádné výklady.<br />První výklad: 51 bodů + čistá postupka.
+                Zatím žádné výklady.<br />První výklad: {RULES.FIRST_MELD_POINTS} bodů + čistá postupka.
               </span>
             </div>
           ) : (

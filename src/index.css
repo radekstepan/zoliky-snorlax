@@ -196,6 +196,11 @@ body,
 .joker-card::after {
   background: linear-gradient(115deg, rgba(255,255,255,0.35) 0%, transparent 40%, transparent 60%, rgba(255,255,255,0.12) 100%);
 }
+/* joker standing in for another card (e.g. a King): keep the diagonal
+   rainbow look, but no sideways crawl */
+.joker-card.joker-placed {
+  animation: none;
+}
 
 .card-selected {
   outline: 3px solid var(--color-neon-blue);
