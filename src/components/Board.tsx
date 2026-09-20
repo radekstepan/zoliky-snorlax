@@ -18,6 +18,7 @@ interface BoardProps {
   onLay: () => void;
   onDiscard: () => void;
   onSort: () => void;
+  sortOn: boolean;
   onHint: () => void;
   onMeldClick: (meld: Meld, jokerCardId?: number) => void;
   onReorderHand: (orderedIds: number[]) => void;
@@ -291,6 +292,7 @@ export default function Board({
   onLay,
   onDiscard,
   onSort,
+  sortOn,
   onHint,
   onMeldClick,
   onReorderHand,
@@ -517,9 +519,11 @@ export default function Board({
                 data-testid="btn-sort"
                 onClick={onSort}
                 disabled={!humanTurn}
-                className="btn-arcade btn-ghost px-2.5 py-2 text-[8px]"
+                aria-pressed={sortOn}
+                title={sortOn ? "Automatické třídění zapnuto — nové karty se zařadí samy" : "Třídit karty (zapne automatické řazení nových karet)"}
+                className={`btn-arcade px-2.5 py-2 text-[8px] ${sortOn ? "btn-green" : "btn-ghost"}`}
               >
-                TŘÍDIT
+                TŘÍDIT{sortOn ? " ●" : ""}
               </button>
               <button
                 type="button"

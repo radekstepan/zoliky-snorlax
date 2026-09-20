@@ -672,18 +672,17 @@ export function rematch(config: GameConfig): GameState {
 /*  Sorting hand                                                       */
 /* ------------------------------------------------------------------ */
 
-export function sortHand(state: GameState): ActionResult {
-  const s = structuredClone(state);
-  const p = s.players[s.current];
+/** Sort a hand of cards: suits grouped (color-alternating blocks), jokers last. Pure — returns a new array. */
+export function sortCards(hand: Card[]): Card[] {
   // Suits stay together; the suit blocks themselves are ordered so colors
   // alternate as much as possible. A fixed s/h/c/d order fails when a suit
   // is missing (e.g. spades + clubs with no hearts => black/black), so the
   // present suits are permuted to minimize same-color block neighbors.
   const suitOrder = { s: 0, h: 1, c: 2, d: 3 } as const;
   const isBlack = (suit: Card["suit"]) => suit === "s" || suit === "c";
-  const jokers = p.hand.filter((c) => c.joker);
+  const jokers = hand.filter((c) => c.joker);
   const groups = new Map<Card["suit"], Card[]>();
-  for (const c of p.hand) {
+  for (const c of hand) {
     if (c.joker) continue;
     const g = groups.get(c.suit);
     if (g) g.push(c);
@@ -722,7 +721,13 @@ export function sortHand(state: GameState): ActionResult {
     }
   };
   permute([...present], 0);
-  p.hand = [...best.flatMap((suit) => groups.get(suit)!), ...jokers];
+  return [...best.flatMap((suit) => groups.get(suit)!), ...jokers];
+}
+
+export function sortHand(state: GameState): ActionResult {
+  const s = structuredClone(state);
+  const p = s.players[s.current];
+  p.hand = sortCards(p.hand);
   return { state: s, events: [] };
 }
 

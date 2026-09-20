@@ -10,7 +10,7 @@ import {
   swapJoker,
   discard,
   reorderHand,
-  sortHand,
+  sortCards,
   nextRound,
   createGame,
   GameEvent,
@@ -55,6 +55,17 @@ export default function App() {
   const [stepText, setStepText] = useState("");
   const [muted, setMuted] = useState(sfx.muted);
   const [gameSeq, setGameSeq] = useState(0);
+  // Sort toggle: while on, every new card in the human hand slots into
+  // sorted order automatically. Manual drag-reorder switches it back off.
+  const [autoSort, setAutoSort] = useState(false);
+  const autoSortRef = useRef(autoSort);
+  autoSortRef.current = autoSort;
+
+  /** Re-sort the human hand in place on an (already cloned) state. */
+  const applyAutoSort = useCallback((st: GameState): GameState => {
+    st.players[0].hand = sortCards(st.players[0].hand);
+    return st;
+  }, []);
 
   const botTimer = useRef<number | null>(null);
   const cancelled = useRef(false);
@@ -285,7 +296,9 @@ export default function App() {
     (cfg: StartConfig) => {
       cancelled.current = false;
       paused.current = false;
-      setGame(createGame(cfg));
+      const fresh = createGame(cfg);
+      if (autoSortRef.current) fresh.players[0].hand = sortCards(fresh.players[0].hand);
+      setGame(fresh);
       setSelected([]);
       setShowRules(false);
       setShowPause(false);
@@ -322,7 +335,9 @@ export default function App() {
     setShowRoundEnd(false);
     setShowGameEnd(false);
     setSelected([]);
-    setGame(createGame(config));
+    const fresh = createGame(config);
+    if (autoSortRef.current) fresh.players[0].hand = sortCards(fresh.players[0].hand);
+    setGame(fresh);
     setGameSeq((s) => s + 1);
     sfx.click();
   };
@@ -330,6 +345,7 @@ export default function App() {
   const goNextRound = () => {
     if (!game) return;
     const res = nextRound(game);
+    if (autoSortRef.current) res.state.players[0].hand = sortCards(res.state.players[0].hand);
     setGame(res.state);
     setSelected([]);
     setShowRoundEnd(false);
@@ -356,6 +372,7 @@ export default function App() {
     const res = draw(game, from);
     if (!res.events.some((e) => e.type === "invalid")) {
       setSelected([]);
+      if (autoSortRef.current) applyAutoSort(res.state);
       setGame(res.state);
     }
     handleEvents(res.events);
@@ -383,15 +400,27 @@ export default function App() {
 
   const doSort = () => {
     if (!game || game.current !== 0 || game.phase !== "play") return;
-    const res = sortHand(game);
-    setGame(res.state);
+    if (autoSortRef.current) {
+      // Toggle off — keep the current order.
+      setAutoSort(false);
+      sfx.click();
+      return;
+    }
+    const next = structuredClone(game);
+    next.players[0].hand = sortCards(next.players[0].hand);
+    setGame(next);
+    setAutoSort(true);
     sfx.click();
   };
 
   const doReorderHand = (orderedIds: number[]) => {
     if (!game || game.current !== 0 || game.phase !== "play") return;
     const res = reorderHand(game, orderedIds);
-    if (res.state !== game) setGame(res.state);
+    if (res.state !== game) {
+      // A manual order wins over the toggle.
+      if (autoSortRef.current) setAutoSort(false);
+      setGame(res.state);
+    }
   };
 
   const doTakeJolly = () => {
@@ -399,6 +428,7 @@ export default function App() {
     const res = takeJolly(game);
     if (!res.events.some((e) => e.type === "invalid")) {
       setSelected([]);
+      if (autoSortRef.current) applyAutoSort(res.state);
       setGame(res.state);
     }
     handleEvents(res.events);
@@ -468,7 +498,10 @@ export default function App() {
         return;
       }
       const res = swapJoker(game, cardId, meld.id, jokerCardId);
-      if (!res.events.some((e) => e.type === "invalid")) setSelected([]);
+      if (!res.events.some((e) => e.type === "invalid")) {
+        setSelected([]);
+        if (autoSortRef.current) applyAutoSort(res.state);
+      }
       setGame(res.state);
       handleEvents(res.events);
       return;
@@ -505,6 +538,7 @@ export default function App() {
           onLay={doLay}
           onDiscard={doDiscard}
           onSort={doSort}
+          sortOn={autoSort}
           onHint={doHint}
           onMeldClick={doMeldClick}
           onReorderHand={doReorderHand}

@@ -9,6 +9,7 @@ import {
   meldsLocked,
   nextRound,
   reorderHand,
+  sortCards,
   sortHand,
   swapJoker,
   takeJolly,
@@ -434,6 +435,17 @@ describe("sortHand and discardUseful", () => {
         break;
       }
     }
+  });
+
+  it("sortCards slots a newly drawn card into sorted order", () => {
+    const hand = [c(9, "h"), c(2, "d"), c(5, "h"), c(3, "d")];
+    const sorted = sortCards(hand);
+    // a new card appended to a sorted hand re-sorts to the same order as sorting all at once
+    const newcomer = c(4, "d");
+    expect(sortCards([...sorted, newcomer])).toEqual(sortCards([...hand, newcomer]));
+    // pure: input untouched, jokers still parked last
+    expect(sortCards([...sorted, joker()]).at(-1)!.joker).toBe(true);
+    expect(hand).toHaveLength(4);
   });
 
   it("reorderHand reapplies a dragged card order without touching the cards", () => {
