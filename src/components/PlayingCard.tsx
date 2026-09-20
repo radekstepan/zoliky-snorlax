@@ -32,6 +32,8 @@ interface PlayingCardProps {
   selected?: boolean;
   faceDown?: boolean;
   hoverable?: boolean;
+  /** lift on hover; disable where hover can't end (touch) so tapped cards don't stick up */
+  hoverLift?: boolean;
   dimmed?: boolean;
   target?: boolean;
   lifted?: boolean;
@@ -55,6 +57,7 @@ export default function PlayingCard({
   selected,
   faceDown,
   hoverable,
+  hoverLift = true,
   dimmed,
   target,
   lifted,
@@ -136,9 +139,9 @@ export default function PlayingCard({
         className,
       ].join(" ")}
       onClick={onClick}
-      onHoverStart={() => setHovered(true)}
-      onHoverEnd={() => setHovered(false)}
-      whileHover={!noAnim && hoverable ? { y: -14, scale: 1.03 } : undefined}
+      onHoverStart={hoverLift ? () => setHovered(true) : undefined}
+      onHoverEnd={hoverLift ? () => setHovered(false) : undefined}
+      whileHover={!noAnim && hoverable && hoverLift ? { y: -14, scale: 1.03 } : undefined}
       whileTap={!noAnim && onClick ? { scale: 0.95 } : undefined}
     >
       {faceDown ? (

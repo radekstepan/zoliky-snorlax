@@ -3,6 +3,7 @@ import { useMemo, useRef } from "react";
 import { GameState, meldsLocked } from "../game/engine";
 import { Meld, canAddToMeld, coverAll, findJokerSwap, meldPoints, isCleanRun } from "../game/melds";
 import { Card, RULES } from "../game/core";
+import { deviceHovers } from "../utils/device";
 import PlayingCard, { CARD_SIZES } from "./PlayingCard";
 
 interface BoardProps {
@@ -95,12 +96,13 @@ interface MeldViewProps {
   interactive: boolean;
   targetable: boolean;
   swapJokerId: number | null;
+  hoverLift: boolean;
   prefix: string;
   onMeldClick: () => void;
   onJokerClick: (jokerCardId: number) => void;
 }
 
-function MeldView({ meld, ownerHue, ownerName, interactive, targetable, swapJokerId, prefix, onMeldClick, onJokerClick }: MeldViewProps) {
+function MeldView({ meld, ownerHue, ownerName, interactive, targetable, swapJokerId, hoverLift, prefix, onMeldClick, onJokerClick }: MeldViewProps) {
   const pts = meldPoints(meld);
   const isRun = meld.type === "run";
   const size = meld.cards.length > 7 ? "sm" : "md";
@@ -134,6 +136,7 @@ function MeldView({ meld, ownerHue, ownerName, interactive, targetable, swapJoke
               asSuit={c.joker && c.jokerAs !== undefined && isRun ? meld.suit : undefined}
               target={isSwapTarget ?? false}
               hoverable={interactive}
+              hoverLift={hoverLift}
               onClick={
                 c.joker && interactive
                   ? (e) => {
@@ -308,6 +311,8 @@ export default function Board({
 
   // stagger the deal animation only on the first render of a fresh round
   const roundRef = useRef(0);
+  // hover affordances only where hover can end — touch taps would stick lifted
+  const canHover = useMemo(deviceHovers, []);
   // set while a card drag is in flight so the trailing click doesn't toggle select
   const dragMoved = useRef(false);
   const isNewRound = roundRef.current !== state.round;
@@ -456,6 +461,7 @@ export default function Board({
                     interactive={interactive}
                     targetable={targetable}
                     swapJokerId={swapHere ? swapHere.jokerCardId : null}
+                    hoverLift={canHover}
                     onMeldClick={() => onMeldClick(m)}
                     onJokerClick={(jid) => onMeldClick(m, jid)}
                   />
@@ -571,6 +577,7 @@ export default function Board({
                       size="lg"
                       selected={isSel}
                       hoverable
+                      hoverLift={canHover}
                       lifted={isSel}
                       dealDelay={isNewRound ? Math.min(i * 0.04, 0.6) : 0}
                       zIndex={isSel ? 50 : i}
@@ -597,6 +604,7 @@ export default function Board({
                     size="lg"
                     selected={isSel}
                     hoverable={false}
+                    hoverLift={canHover}
                     lifted={isSel}
                     dealDelay={isNewRound ? Math.min(i * 0.04, 0.6) : 0}
                     zIndex={isSel ? 50 : i}

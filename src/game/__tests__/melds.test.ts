@@ -163,6 +163,18 @@ describe("canAddToMeld", () => {
     const pair = meldOf([c(7, "h"), c(7, "d"), joker()]);
     expect(canAddToMeld(pair, joker())).toBeNull();
   });
+
+  it("offers no layoff or swap target for an unrelated jack", () => {
+    // table shapes from a real game: clubs run ending in a joker-as-8,
+    // and a hearts J-Q-K-A run — a selected J♠/J♦ fits neither
+    const clubs = meldOf([c(4, "c"), c(5, "c"), c(6, "c"), c(7, "c"), joker()]);
+    const hearts = meldOf([c(11, "h"), c(12, "h"), c(13, "h"), c(14, "h")]);
+    for (const jack of [c(11, "s"), c(11, "d")]) {
+      expect(canAddToMeld(clubs, jack)).toBeNull();
+      expect(canAddToMeld(hearts, jack)).toBeNull();
+      expect(findJokerSwap([clubs, hearts], [jack])).toBeNull();
+    }
+  });
 });
 
 describe("joker swaps", () => {
