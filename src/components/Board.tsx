@@ -108,12 +108,15 @@ function MeldView({ meld, ownerHue, ownerName, interactive, targetable, swapJoke
   const isRun = meld.type === "run";
   const size = meld.cards.length > 7 ? "sm" : "md";
   const clean = isCleanRun(meld);
+  // Only a genuine layoff/swap destination invites hover — otherwise cards
+  // under a resting cursor would lift on mere selection and look highlighted.
+  const hot = targetable || swapJokerId !== null;
   return (
     <div
       className={`relative rounded-lg border-2 transition-colors ${
         targetable ? "border-neon-gold/80 shadow-[0_0_16px_rgba(255,211,25,0.35)]" : "border-white/10"
       } ${interactive && !targetable ? "border-white/5" : ""}`}
-      style={{ background: "rgba(13,9,32,0.55)", cursor: interactive ? "pointer" : "default" }}
+      style={{ background: "rgba(13,9,32,0.55)", cursor: interactive && hot ? "pointer" : "default" }}
       onClick={onMeldClick}
     >
       <div className="flex items-center gap-1.5 px-1.5 pt-1 pb-0.5">
@@ -136,7 +139,7 @@ function MeldView({ meld, ownerHue, ownerName, interactive, targetable, swapJoke
               asRank={c.joker && c.jokerAs !== undefined ? c.jokerAs : undefined}
               asSuit={c.joker && c.jokerAs !== undefined && isRun ? meld.suit : undefined}
               target={isSwapTarget ?? false}
-              hoverable={interactive}
+              hoverable={interactive && (targetable || !!isSwapTarget)}
               hoverLift={hoverLift}
               onClick={
                 c.joker && interactive

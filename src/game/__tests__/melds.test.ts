@@ -175,6 +175,20 @@ describe("canAddToMeld", () => {
       expect(findJokerSwap([clubs, hearts], [jack])).toBeNull();
     }
   });
+
+  it("offers no layoff or swap target for an ace that fits neither run", () => {
+    // screenshot shape: 8-9-10-J diamonds (37b) and 9-10-J-Q-K spades (49b);
+    // a selected A♦ fits nowhere, so the table must stay unhighlighted
+    const diamonds = meldOf([c(8, "d"), c(9, "d"), c(10, "d"), c(11, "d")]);
+    const spades = meldOf([c(9, "s"), c(10, "s"), c(11, "s"), c(12, "s"), c(13, "s")]);
+    expect(meldPoints(diamonds)).toBe(37);
+    expect(meldPoints(spades)).toBe(49);
+    const ace = c(14, "d");
+    expect(canAddToMeld(diamonds, ace)).toBeNull();
+    expect(canAddToMeld(spades, ace)).toBeNull();
+    expect(findJokerSwap([diamonds, spades], [ace])).toBeNull();
+    expect(layoffTargets(ace, [diamonds, spades])).toEqual([]);
+  });
 });
 
 describe("joker swaps", () => {
