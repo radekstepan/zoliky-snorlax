@@ -1,7 +1,7 @@
 import { motion, AnimatePresence, Reorder } from "framer-motion";
 import { useMemo, useRef } from "react";
 import { GameState, meldsLocked } from "../game/engine";
-import { Meld, canAddToMeld, coverAll, canJollyClose, findJokerSwap, meldPoints, isCleanRun } from "../game/melds";
+import { Meld, canAddToMeld, coverAll, canJollyClose, findJokerSwap, meldPoints, isCleanRun, jokerView } from "../game/melds";
 import { Card, RULES } from "../game/core";
 import { deviceHovers } from "../utils/device";
 import { kartyCount, kombinaceCount } from "../utils/czech";
@@ -130,6 +130,10 @@ function MeldView({ meld, ownerHue, ownerName, interactive, targetable, swapJoke
       <div className="fan-tight flex px-1 pb-1.5 pt-0.5">
         {meld.cards.map((c) => {
           const isSwapTarget = c.joker && c.id === swapJokerId;
+          // Set jokers carry no suit (any missing suit completes the set),
+          // so they render as plain jokers rather than a rank with a
+          // placeholder symbol.
+          const jv = jokerView(meld, c);
           return (
             <PlayingCard
               key={c.id}
@@ -137,8 +141,8 @@ function MeldView({ meld, ownerHue, ownerName, interactive, targetable, swapJoke
               prefix={prefix}
               noAnim={c.joker && c.jokerAs !== undefined}
               size={size}
-              asRank={c.joker && c.jokerAs !== undefined ? c.jokerAs : undefined}
-              asSuit={c.joker && c.jokerAs !== undefined && isRun ? meld.suit : undefined}
+              asRank={jv.asRank}
+              asSuit={jv.asSuit}
               target={isSwapTarget ?? false}
               hoverable={interactive && (targetable || !!isSwapTarget)}
               hoverLift={hoverLift}

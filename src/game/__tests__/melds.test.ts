@@ -11,6 +11,7 @@ import {
   firstMeldOk,
   firstMeldProblem,
   isCleanRun,
+  jokerView,
   layoffTargets,
   meldPoints,
   tryCreateMeld,
@@ -279,5 +280,30 @@ describe("subset search", () => {
     const set = meldOf([c(5, "d"), c(5, "s"), c(5, "c")]);
     expect(layoffTargets(c(10, "h"), [run, set])).toEqual([run]);
     expect(layoffTargets(c(2, "c"), [run, set])).toEqual([]);
+  });
+});
+
+describe("jokerView — placed-joker display identity", () => {
+  it("gives a run joker the rank and suit it stands in for", () => {
+    const m = meldOf([c(10, "d"), c(11, "d"), joker()]);
+    const jok = m.cards.find((x) => x.joker)!;
+    expect(jokerView(m, jok)).toEqual({ asRank: jok.jokerAs, asSuit: "d" });
+  });
+
+  it("gives a set joker no identity so it renders as a plain joker", () => {
+    // A set joker has no single suit (any missing suit completes the set);
+    // passing a rank without a suit made the card view show a placeholder.
+    const m = meldOf([c(4, "d"), c(4, "s"), joker()]);
+    expect(m.type).toBe("set");
+    const jok = m.cards.find((x) => x.joker)!;
+    expect(jokerView(m, jok)).toEqual({});
+  });
+
+  it("gives natural cards and unresolved jokers no identity", () => {
+    const m = meldOf([c(4, "d"), c(4, "s"), joker()]);
+    const nat = m.cards.find((x) => !x.joker)!;
+    expect(jokerView(m, nat)).toEqual({});
+    const bare = { ...joker(), jokerAs: undefined };
+    expect(jokerView(m, bare)).toEqual({});
   });
 });

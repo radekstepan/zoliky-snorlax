@@ -260,6 +260,28 @@ export function applyJokerSwap(meld: Meld, swap: JokerSwap): Meld {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Joker display                                                       */
+/* ------------------------------------------------------------------ */
+
+export interface JokerView {
+  asRank?: number;
+  asSuit?: Suit;
+}
+
+/**
+ * Display identity for a placed joker (the card it stands in for).
+ * A run joker stands in for one specific card, so it renders with that
+ * rank and the run's suit. A set joker has no single suit — any missing
+ * suit completes the set — so it renders as a plain joker (no rank/suit
+ * override); otherwise the card view falls back to a placeholder symbol.
+ */
+export function jokerView(meld: Meld, card: PlacedCard): JokerView {
+  if (!card.joker || card.jokerAs === undefined) return {};
+  if (meld.type !== "run" || meld.suit === undefined) return {};
+  return { asRank: card.jokerAs, asSuit: meld.suit };
+}
+
+/* ------------------------------------------------------------------ */
 /*  First-meld gate: 36 points + one clean run                         */
 /* ------------------------------------------------------------------ */
 
