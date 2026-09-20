@@ -239,6 +239,20 @@ describe("subset search", () => {
     expect(bestPackingIncluding([c(2, "c"), c(13, "d"), c(9, "s")], false, 0, 0)).toBeNull();
   });
 
+  it("bestPackingIncluding combines the must-use meld with others to reach 36", () => {
+    // J-Q-K spades (30) alone is below the first-meld gate; together with
+    // 8-9-10 diamonds (27) it reaches 57 with a clean run.
+    const h = [c(11, "s"), c(13, "s"), c(8, "d"), c(9, "d"), c(10, "d"), c(12, "s")];
+    const mustIdx = h.length - 1; // Q♠ — the discard-pile card
+    const p = bestPackingIncluding(h, true, RULES.FIRST_MELD_POINTS, mustIdx);
+    expect(p).not.toBeNull();
+    expect(p!.points).toBeGreaterThanOrEqual(RULES.FIRST_MELD_POINTS);
+    expect(p!.clean).toBe(true);
+    const used = p!.melds.flatMap((m) => m.cards.map((x) => x.id));
+    expect(used).toContain(h[mustIdx].id);
+    expect(p!.melds).toHaveLength(2);
+  });
+
   it("coverAll partitions every card or fails", () => {
     const ok = coverAll([c(7, "h"), c(8, "h"), c(9, "h"), c(5, "d"), c(5, "s"), c(5, "c")]);
     expect(ok).toHaveLength(2);

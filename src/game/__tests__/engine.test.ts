@@ -134,6 +134,21 @@ describe("discard / draw cycle", () => {
     expect(r.state).toBe(s);
   });
 
+  it("lets an unmelded player take a pile card that opens via two melds", () => {
+    // J♠ + K♠ in hand, Q♠ on the pile: J-Q-K (30) needs 8-9-10 diamonds
+    // (27) to clear the 36-point first-meld gate.
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.turnPhase = "draw";
+    s.melds = [];
+    s.players[s.current].melded = false;
+    s.players[s.current].hand = [c(11, "s"), c(13, "s"), c(8, "d"), c(9, "d"), c(10, "d")];
+    const top = c(12, "s");
+    s.discard = [top];
+    const r = draw(s, "discard");
+    expect(invalidOf(r.events)).toHaveLength(0);
+    expect(r.state.pendingLayId).toBe(top.id);
+  });
+
   it("ends the round with no closer when stock and pile are exhausted", () => {
     let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
     s.turnPhase = "draw";

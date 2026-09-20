@@ -405,8 +405,8 @@ export function bestPackingIncluding(
   mustIdx: number
 ): Packing | null {
   const mustBit = 1 << mustIdx;
-  const cands = findAllMelds(hand).filter((c) => c.mask & mustBit);
-  if (cands.length === 0) return null;
+  const cands = findAllMelds(hand);
+  if (!cands.some((c) => c.mask & mustBit)) return null;
   const n = hand.length;
   const size = 1 << n;
   const dp = new Int16Array(size).fill(-1);
@@ -427,8 +427,9 @@ export function bestPackingIncluding(
       }
     }
   }
-  // NOTE: masks that avoid mustIdx are unreachable here — every candidate
-  // carries mustBit, so any reachable nonzero mask includes it.
+  // Pack over all candidates; the must-use card is enforced by keeping
+  // only final masks that contain mustBit, so a must-meld can combine
+  // with other melds to reach the point gate.
   let bestMask = -1;
   let bestPts = -1;
   for (let mask = 0; mask < size; mask++) {
