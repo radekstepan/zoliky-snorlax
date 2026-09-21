@@ -21,6 +21,25 @@ export interface DiscardFlightInfo {
   card: Card;
 }
 
+/** A bot pickup awaiting its fly-to-chip animation (commit-then-conceal:
+    the engine draw already ran; the chip count stays -1 until landing).
+    `card` is a snapshot for the face-up discard-pile case; stock/jolly
+    ghosts stay face-down so the bot hand stays secret. */
+export interface BotDrawFlightInfo {
+  playerId: number;
+  cardId: number;
+  from: "stock" | "discard" | "jolly";
+  card: Card;
+}
+
+/** A staged bot discard awaiting its fly-to-pile animation (fly-then-commit:
+    the engine discard runs only after the ghost lands on the pile). */
+export interface BotDiscardFlightInfo {
+  playerId: number;
+  cardId: number;
+  card: Card;
+}
+
 interface BoardProps {
   state: GameState;
   animKey: number;
@@ -45,6 +64,10 @@ interface BoardProps {
   onDrawBusyChange?: (busy: boolean) => void;
   lastDiscard?: DiscardFlightInfo | null;
   onDiscardFlightDone?: () => void;
+  lastBotDraw?: BotDrawFlightInfo | null;
+  onBotDrawFlightDone?: () => void;
+  lastBotDiscard?: BotDiscardFlightInfo | null;
+  onBotDiscardFlightDone?: () => void;
 }
 
 const hueColor = (hue: number, l = 60) => `hsl(${hue} 80% ${l}%)`;
@@ -53,9 +76,12 @@ const hueColor = (hue: number, l = 60) => `hsl(${hue} 80% ${l}%)`;
 /*  Small player chip                                                  */
 /* ------------------------------------------------------------------ */
 
-function PlayerChip({ state, idx, isTurn, thinking }: { state: GameState; idx: number; isTurn: boolean; thinking: boolean }) {
+function PlayerChip({ state, idx, isTurn, thinking, concealed }: { state: GameState; idx: number; isTurn: boolean; thinking: boolean; concealed?: boolean }) {
   const p = state.players[idx];
   const active = state.phase === "play" && isTurn;
+  // Commit-then-conceal mirror of the human pickup: the engine draw already
+  // ran, but the chip still shows the old count until the ghost lands.
+  const shownCount = concealed ? Math.max(0, p.hand.length - 1) : p.hand.length;
   return (
     <div
       className="panel relative px-3 py-2 flex items-center gap-3 transition-shadow"
@@ -88,11 +114,11 @@ function PlayerChip({ state, idx, isTurn, thinking }: { state: GameState; idx: n
       </div>
       <div className="flex flex-col items-end gap-1 shrink-0">
         <div className="flex -space-x-3">
-          {p.hand.slice(0, Math.min(5, p.hand.length)).map((c, i) => (
+          {p.hand.slice(0, Math.min(5, shownCount)).map((c, i) => (
             <div key={c.id} className="card-back w-4 h-6 rounded-[4px] relative" style={{ zIndex: 5 - i }} />
           ))}
         </div>
-        <span className="font-pixel text-[8px] opacity-70">{kartyCount(p.hand.length)}</span>
+        <span className="font-pixel text-[8px] opacity-70">{kartyCount(shownCount)}</span>
       </div>
       {active && (
         <div className="absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded bg-black/80 border whitespace-nowrap"
@@ -351,6 +377,10 @@ export default function Board({
   onDrawBusyChange,
   lastDiscard,
   onDiscardFlightDone,
+  lastBotDraw,
+  onBotDrawFlightDone,
+  lastBotDiscard,
+  onBotDiscardFlightDone,
 }: BoardProps) {
   const human = state.players[0];
   const humanTurn = state.current === 0 && state.phase === "play";
@@ -380,6 +410,7 @@ export default function Board({
   const jollyRef = useRef<HTMLDivElement | null>(null);
   const handRowRef = useRef<HTMLDivElement | null>(null);
   const slotRefs = useRef(new Map<number, HTMLDivElement>());
+  const chipRefs = useRef(new Map<number, HTMLDivElement>());
   interface FlightGeom {
     fromX: number;
     fromY: number;
@@ -551,6 +582,8 @@ export default function Board({
     () => () => {
       window.clearTimeout(landTimer.current);
       window.clearTimeout(discardTimer.current);
+      window.clearTimeout(botLandTimer.current);
+      window.clearTimeout(botDiscardTimer.current);
     },
     []
   );
@@ -675,6 +708,198 @@ export default function Board({
     onDiscard();
   };
 
+  /* ---- bot draw-flight: commit-then-conceal pile → chip. Mirror of the
+     human pickup, but the target is the opponent chip (backs only) and
+     the chip count stays -1 until the ghost lands. ---- */
+  interface BotFlightGeom {
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+    w: number;
+    h: number;
+    apex: number;
+  }
+  const [botFlight, setBotFlight] = useState<BotFlightGeom | null>(null);
+  const [botLanded, setBotLanded] = useState(false);
+  const botLandTimer = useRef(0);
+  const botDrawPlayer = lastBotDraw ? state.players[lastBotDraw.playerId] : null;
+  const botDrawConcealed =
+    !!lastBotDraw && !!botDrawPlayer && !botLanded && !isNewRound &&
+    botDrawPlayer.hand.some((c) => c.id === lastBotDraw.cardId);
+
+  useEffect(() => {
+    if (!lastBotDraw || isNewRound || !botDrawConcealed) {
+      if (!lastBotDraw) {
+        setBotFlight(null);
+        setBotLanded(false);
+      }
+      return;
+    }
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      sfx.draw();
+      onBotDrawFlightDone?.();
+      return;
+    }
+    let cancelled = false;
+    setBotLanded(false);
+    const raf = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        const src =
+          lastBotDraw.from === "stock"
+            ? stockRef.current
+            : lastBotDraw.from === "discard"
+              ? discardRef.current
+              : (jollyRef.current ?? stockRef.current);
+        const dst = chipRefs.current.get(lastBotDraw.playerId);
+        if (!src || !dst) {
+          sfx.draw();
+          onBotDrawFlightDone?.();
+          return;
+        }
+        const s = src.getBoundingClientRect();
+        const d = dst.getBoundingClientRect();
+        const w = Math.min(s.width || 54, 64) || 54;
+        const h = w * 1.4;
+        if (w === 0) {
+          sfx.draw();
+          onBotDrawFlightDone?.();
+          return;
+        }
+        setBotFlight({
+          fromX: s.left + s.width / 2 - w / 2,
+          fromY: s.top + s.height / 2 - h / 2,
+          toX: d.left + d.width / 2 - w / 2,
+          toY: d.top + d.height / 2 - h / 2,
+          w,
+          h,
+          apex: Math.min(s.top, d.top) - 84,
+        });
+        sfx.pickTick();
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastBotDraw?.cardId, lastBotDraw?.from, lastBotDraw?.playerId, state.round, animKey]);
+
+  useEffect(() => {
+    if (lastBotDraw && !botDrawConcealed && !isNewRound) {
+      window.clearTimeout(botLandTimer.current);
+      setBotFlight(null);
+      setBotLanded(false);
+      onBotDrawFlightDone?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastBotDraw?.cardId, botDrawConcealed]);
+
+  useEffect(() => {
+    if (lastBotDraw && isNewRound) {
+      window.clearTimeout(botLandTimer.current);
+      setBotFlight(null);
+      setBotLanded(false);
+      onBotDrawFlightDone?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastBotDraw?.cardId, state.round]);
+
+  const beginBotLanding = () => {
+    if (botLanded) return;
+    setBotLanded(true);
+    sfx.land();
+    window.clearTimeout(botLandTimer.current);
+    botLandTimer.current = window.setTimeout(() => {
+      setBotFlight(null);
+      onBotDrawFlightDone?.();
+    }, 360);
+  };
+
+  /* ---- bot discard-flight: fly-then-commit chip → pile. Mirror of the
+     human discard, but the source is the opponent chip and the ghost is
+     the staged face-up snapshot. ---- */
+  const [botDiscardFlight, setBotDiscardFlight] = useState<BotFlightGeom | null>(null);
+  const [botDiscardLanded, setBotDiscardLanded] = useState(false);
+  const [botDiscardGhost, setBotDiscardGhost] = useState<Card | null>(null);
+  const botDiscardTimer = useRef(0);
+
+  useEffect(() => {
+    if (!lastBotDiscard || isNewRound) {
+      if (!lastBotDiscard && !botDiscardLanded) {
+        setBotDiscardFlight(null);
+        setBotDiscardGhost(null);
+        setBotDiscardLanded(false);
+      }
+      return;
+    }
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      onBotDiscardFlightDone?.();
+      return;
+    }
+    let cancelled = false;
+    setBotDiscardLanded(false);
+    const raf = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        const src = chipRefs.current.get(lastBotDiscard.playerId);
+        const dst = discardRef.current;
+        if (!src || !dst) {
+          onBotDiscardFlightDone?.();
+          return;
+        }
+        const s = src.getBoundingClientRect();
+        const d = dst.getBoundingClientRect();
+        const w = Math.min(d.width || 54, 64) || 54;
+        const h = w * 1.4;
+        if (w === 0 || h === 0) {
+          onBotDiscardFlightDone?.();
+          return;
+        }
+        setBotDiscardGhost(lastBotDiscard.card);
+        setBotDiscardFlight({
+          fromX: s.left + s.width / 2 - w / 2,
+          fromY: s.top + s.height / 2 - h / 2,
+          toX: d.left + d.width / 2 - w / 2,
+          toY: d.top + d.height / 2 - h / 2,
+          w,
+          h,
+          apex: Math.min(s.top, d.top) - 84,
+        });
+        sfx.pickTick();
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastBotDiscard?.cardId, lastBotDiscard?.playerId, state.round, animKey]);
+
+  useEffect(() => {
+    if (lastBotDiscard && isNewRound) {
+      window.clearTimeout(botDiscardTimer.current);
+      setBotDiscardFlight(null);
+      setBotDiscardGhost(null);
+      setBotDiscardLanded(false);
+      onBotDiscardFlightDone?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastBotDiscard?.cardId, state.round]);
+
+  const beginBotDiscardLanding = () => {
+    if (botDiscardLanded) return;
+    setBotDiscardLanded(true);
+    if (lastBotDiscard) setPilePopId(lastBotDiscard.cardId);
+    onBotDiscardFlightDone?.();
+    window.clearTimeout(botDiscardTimer.current);
+    botDiscardTimer.current = window.setTimeout(() => {
+      setBotDiscardFlight(null);
+      setBotDiscardGhost(null);
+    }, 320);
+  };
+
   const canJolly = useMemo(() => {
     if (!humanTurn || state.phase !== "play") return false;
     if (state.turnPhase !== "draw" || state.skipDraw) return false;
@@ -749,7 +974,21 @@ export default function Board({
       <div className="px-3 sm:px-5 pt-3 shrink-0">
         <div className={`grid gap-2.5 ${bots.length === 1 ? "grid-cols-1 max-w-md mx-auto" : bots.length === 2 ? "grid-cols-2" : "grid-cols-3"}`}>
           {bots.map((b) => (
-            <PlayerChip key={b.id} state={state} idx={b.id} isTurn={state.current === b.id} thinking={thinkingBot === b.id} />
+            <div
+              key={b.id}
+              ref={(el) => {
+                if (el) chipRefs.current.set(b.id, el);
+                else chipRefs.current.delete(b.id);
+              }}
+            >
+              <PlayerChip
+                state={state}
+                idx={b.id}
+                isTurn={state.current === b.id}
+                thinking={thinkingBot === b.id}
+                concealed={!!lastBotDraw && lastBotDraw.playerId === b.id && botDrawConcealed}
+              />
+            </div>
           ))}
         </div>
       </div>
@@ -1136,6 +1375,104 @@ export default function Board({
           <PlayingCard
             card={discardGhost}
             size="lg"
+            noAnim
+            style={{ width: "100%" }}
+          />
+        </motion.div>
+      )}
+
+      {/* bot pickup: pile → opponent chip. Stock/jolly stays face-down so
+          the bot hand stays secret; discard-pile takes fly face-up. */}
+      {botFlight && lastBotDraw && (
+        <motion.div
+          key={`bot-draw-flight-${lastBotDraw.playerId}-${lastBotDraw.cardId}`}
+          data-testid="bot-draw-flight"
+          style={{
+            position: "fixed",
+            left: 0,
+            top: 0,
+            width: botFlight.w,
+            height: botFlight.h,
+            zIndex: 80,
+            pointerEvents: "none",
+            perspective: 800,
+            filter: "drop-shadow(0 12px 24px rgba(0,0,0,0.55))",
+          }}
+          initial={{ x: botFlight.fromX, y: botFlight.fromY, scale: 0.62, rotate: -12, opacity: 0 }}
+          animate={
+            botLanded
+              ? { x: botFlight.toX, y: botFlight.toY, scale: 0.9, rotate: 0, opacity: 0 }
+              : {
+                  x: botFlight.toX,
+                  y: [botFlight.fromY, botFlight.apex, botFlight.toY],
+                  scale: [0.62, 1, 1.03],
+                  rotate: [-12, 3, 0],
+                  opacity: [0, 1, 1],
+                }
+          }
+          transition={
+            botLanded
+              ? { duration: 0.12, ease: "easeOut" }
+              : { duration: 0.6, ease: [0.22, 0.9, 0.3, 1] }
+          }
+          onAnimationComplete={() => {
+            if (!botLanded) beginBotLanding();
+            else setBotFlight(null);
+          }}
+        >
+          {lastBotDraw.from === "discard" ? (
+            <PlayingCard card={lastBotDraw.card} size="md" noAnim style={{ width: "100%" }} />
+          ) : (
+            <div className="card-back" style={{ width: "100%", height: "100%" }} />
+          )}
+        </motion.div>
+      )}
+
+      {/* bot discard: opponent chip → pile, then hands off to the pile
+          top's pop (mirror of the bot pickup, reversed) */}
+      {botDiscardFlight && botDiscardGhost && (
+        <motion.div
+          key={`bot-discard-flight-${botDiscardGhost.id}`}
+          data-testid="bot-discard-flight"
+          style={{
+            position: "fixed",
+            left: 0,
+            top: 0,
+            width: botDiscardFlight.w,
+            height: botDiscardFlight.h,
+            zIndex: 80,
+            pointerEvents: "none",
+            perspective: 800,
+            filter: "drop-shadow(0 12px 24px rgba(0,0,0,0.55))",
+          }}
+          initial={{ x: botDiscardFlight.fromX, y: botDiscardFlight.fromY, scale: 1.03, rotate: 0, opacity: 1 }}
+          animate={
+            botDiscardLanded
+              ? { x: botDiscardFlight.toX, y: botDiscardFlight.toY, scale: 0.62, rotate: -12, opacity: 0 }
+              : {
+                  x: botDiscardFlight.toX,
+                  y: [botDiscardFlight.fromY, botDiscardFlight.apex, botDiscardFlight.toY],
+                  scale: [1.03, 1, 0.62],
+                  rotate: [0, 3, -12],
+                  opacity: [1, 1, 1],
+                }
+          }
+          transition={
+            botDiscardLanded
+              ? { duration: 0.12, ease: "easeOut" }
+              : { duration: 0.6, ease: [0.22, 0.9, 0.3, 1] }
+          }
+          onAnimationComplete={() => {
+            if (!botDiscardLanded) beginBotDiscardLanding();
+            else {
+              setBotDiscardFlight(null);
+              setBotDiscardGhost(null);
+            }
+          }}
+        >
+          <PlayingCard
+            card={botDiscardGhost}
+            size="md"
             noAnim
             style={{ width: "100%" }}
           />
