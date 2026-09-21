@@ -10,6 +10,7 @@ import {
   layoff,
   swapJoker,
   discard,
+  undoPickup,
   reorderHand,
   sortCards,
   nextRound,
@@ -123,6 +124,13 @@ export default function App() {
             break;
           case "discard":
             sfx.discard();
+            break;
+          case "undoPickup":
+            sfx.click();
+            toast(
+              `${game.players[e.player].name} vrací kartu zpět na hromádku.`,
+              "info"
+            );
             break;
           case "meld":
             sfx.meld();
@@ -639,6 +647,19 @@ export default function App() {
     handleEvents(res.events);
   };
 
+  /** Return a still-unused discard-pile pickup to the pile (undo). */
+  const doUndoPickup = () => {
+    if (!game || !humanTurn) return;
+    if (drawBusy || lastDiscardRef.current) return;
+    const res = undoPickup(game);
+    if (!res.events.some((e) => e.type === "invalid")) {
+      setSelected([]);
+      setLastDraw(null);
+      setGame(res.state);
+    }
+    handleEvents(res.events);
+  };
+
   /** Begin a human discard: stage the flight; the engine commit runs on landing. */
   const doDiscard = () => {
     if (!game || !humanTurn || selected.length !== 1) return;
@@ -832,6 +853,7 @@ export default function App() {
           onTakeJolly={doTakeJolly}
           onLay={doLay}
           onDiscard={doDiscard}
+          onUndoPickup={doUndoPickup}
           onSort={doSort}
           sortOn={autoSort}
           onHint={doHint}

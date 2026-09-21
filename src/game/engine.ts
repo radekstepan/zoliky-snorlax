@@ -68,6 +68,9 @@ export interface GameState {
   jollyCard: Card | null;
   /** Discard-pile card taken this turn — must be laid before discarding. */
   pendingLayId: number | null;
+  /** True while the pending discard-pile pickup may still be returned to
+      the pile — cleared by any lay, layoff or joker swap afterwards. */
+  pickupUndoable: boolean;
   /** Joker taken from the table this turn — must be used before discarding. */
   pendingJokerId: number | null;
   /** Jolly Hand attempt in progress — meld everything, discard the last card. */
@@ -86,6 +89,7 @@ export interface GameState {
 
 export type GameEvent =
   | { type: "draw"; player: number; from: "stock" | "discard" }
+  | { type: "undoPickup"; player: number; card: Card }
   | { type: "discard"; player: number; card: Card }
   | { type: "meld"; player: number; points: number }
   | { type: "layoff"; player: number }
@@ -156,6 +160,7 @@ export function createGame(config: GameConfig): GameState {
     jollyCard: null,
     pendingLayId: null,
     pendingJokerId: null,
+    pickupUndoable: false,
     jollyRush: false,
     melds: [],
     round: 1,
@@ -189,6 +194,7 @@ function dealRound(state: GameState): void {
   state.winner = null;
   state.pendingLayId = null;
   state.pendingJokerId = null;
+  state.pickupUndoable = false;
   state.jollyRush = false;
   for (const p of state.players) {
     p.hand = [];
@@ -295,6 +301,7 @@ export function draw(state: GameState, from: "stock" | "discard"): ActionResult 
     const card = s.discard.pop()!;
     me.hand.push(card);
     s.pendingLayId = card.id;
+    s.pickupUndoable = true;
     pushLog(s, `${me.name} si bere kartu z hromádky (musí ji hned vyložit).`, "info");
   } else {
     if (s.deck.length === 0) {
@@ -315,6 +322,37 @@ export function draw(state: GameState, from: "stock" | "discard"): ActionResult 
   s.turnPhase = "action";
   events.push({ type: "draw", player: s.current, from });
   return { state: s, events };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Undo a discard-pile pickup — return the card to the pile top       */
+/* ------------------------------------------------------------------ */
+
+/** Return a still-unused discard-pile pickup to the pile and resume the
+ *  draw step. Only valid while the taken card is still in hand and no
+ *  lay, layoff or joker swap has happened since the pickup. */
+export function undoPickup(state: GameState): ActionResult {
+  if (state.phase !== "play") return invalid(state, "Hra neběží.");
+  if (state.turnPhase !== "action")
+    return invalid(state, "Nejprve si táhni kartu.");
+  const me = state.players[state.current];
+  if (
+    state.pendingLayId === null ||
+    !me.hand.some((c) => c.id === state.pendingLayId)
+  )
+    return invalid(state, "Není co vrátit na hromádku.");
+  if (!state.pickupUndoable)
+    return invalid(state, "Po vyložení už kartu vrátit nejde.");
+  const s = structuredClone(state);
+  const p = s.players[s.current];
+  const idx = p.hand.findIndex((c) => c.id === s.pendingLayId);
+  const [card] = p.hand.splice(idx, 1);
+  s.discard.push(card);
+  s.pendingLayId = null;
+  s.pickupUndoable = false;
+  s.turnPhase = "draw";
+  pushLog(s, `${p.name} vrací kartu zpět na hromádku.`, "info");
+  return { state: s, events: [{ type: "undoPickup", player: s.current, card }] };
 }
 
 /* ------------------------------------------------------------------ */
@@ -392,6 +430,8 @@ export function layMeld(state: GameState, cardIds: number[]): ActionResult {
   if (s.pendingLayId !== null && ids.has(s.pendingLayId)) s.pendingLayId = null;
   if (s.pendingJokerId !== null && ids.has(s.pendingJokerId))
     s.pendingJokerId = null;
+  // any lay after a pickup makes the pickup unreturnable
+  s.pickupUndoable = false;
   s.melds.push(...newMelds);
   p.melded = true;
   const pts = newMelds.reduce((a, m) => a + meldPoints(m), 0);
@@ -447,6 +487,8 @@ export function layoff(
   p.hand = p.hand.filter((c) => c.id !== cardId);
   if (s.pendingLayId === cardId) s.pendingLayId = null;
   if (s.pendingJokerId === cardId) s.pendingJokerId = null;
+  // any layoff after a pickup makes the pickup unreturnable
+  s.pickupUndoable = false;
   m.cards.push(placed);
   if (m.type === "run") {
     m.cards.sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0));
@@ -543,6 +585,8 @@ export function swapJoker(
   p.hand.push(jokerToHand);
   // a joker taken from the table must be used before the turn ends
   s.pendingJokerId = jokerToHand.id;
+  // a table exchange after a pickup makes the pickup unreturnable
+  s.pickupUndoable = false;
   pushLog(s, `${p.name} vyměňuje žolíka (musí ho v tomto tahu využít).`, "info");
   return { state: s, events: [{ type: "swap", player: s.current }] };
 }
@@ -591,6 +635,7 @@ export function discard(state: GameState, cardId: number): ActionResult {
   pushLog(s, `${p.name} odhazuje.`, "info");
   s.pendingLayId = null;
   s.pendingJokerId = null;
+  s.pickupUndoable = false;
   s.skipDraw = false;
   s.current = (s.current + 1) % s.players.length;
   s.turnPhase = "draw";

@@ -56,6 +56,7 @@ interface BoardProps {
   onTakeJolly: () => void;
   onLay: () => void;
   onDiscard: () => void;
+  onUndoPickup: () => void;
   onSort: () => void;
   sortOn: boolean;
   onHint: () => void;
@@ -389,6 +390,7 @@ export default function Board({
   onTakeJolly,
   onLay,
   onDiscard,
+  onUndoPickup,
   onSort,
   sortOn,
   onHint,
@@ -963,7 +965,7 @@ export default function Board({
         ? { title: "TÁHNI SI", sub: `balíček — hromádka až po ${RULES.MELD_WAIT_ROUNDS}. kole`, cls: "neon-blue" }
         : { title: "TÁHNI SI", sub: "balíček, hromádka (hned vyložit) nebo JOLLY", cls: "neon-blue" };
     if (state.pendingLayId !== null && human.hand.some((c) => c.id === state.pendingLayId))
-      return { title: "VYLOŽ KARTU", sub: "kartu z hromádky musíš hned vyložit", cls: "neon-gold" };
+      return { title: "VYLOŽ KARTU", sub: "kartu z hromádky musíš hned vyložit, nebo ji vrať zpět", cls: "neon-gold" };
     if (state.pendingJokerId !== null && human.hand.some((c) => c.id === state.pendingJokerId))
       return { title: "VYUŽIJ ŽOLÍKA", sub: "vyměněného žolíka musíš v tomto tahu využít", cls: "neon-gold" };
     if (locked)
@@ -1139,6 +1141,20 @@ export default function Board({
               )}
             </div>
             <div className="flex items-center gap-1.5 ml-auto flex-wrap justify-end">
+              {state.pendingLayId !== null &&
+                human.hand.some((c) => c.id === state.pendingLayId) &&
+                state.pickupUndoable && (
+                  <button
+                    type="button"
+                    data-testid="btn-undo-pickup"
+                    onClick={onUndoPickup}
+                    disabled={!humanTurn || state.turnPhase !== "action" || hushHand}
+                    className="btn-arcade btn-ghost px-2.5 py-2 text-[8px]"
+                    title="Vrátit kartu z hromádky zpět a táhnout znovu"
+                  >
+                    VRÁTIT
+                  </button>
+                )}
               <button
                 type="button"
                 data-testid="btn-hint"

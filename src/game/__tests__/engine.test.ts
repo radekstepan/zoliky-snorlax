@@ -14,6 +14,7 @@ import {
   sortHand,
   swapJoker,
   takeJolly,
+  undoPickup,
 } from "../engine";
 import type { GameState } from "../engine";
 import { tryCreateMeld } from "../melds";
@@ -319,6 +320,93 @@ describe("pending pile card", () => {
     // …and the new set can actually be laid
     const laid = layMeld(r.state, [s.players[s.current].hand[0].id, s.players[s.current].hand[1].id, top.id]);
     expect(invalidOf(laid.events)).toHaveLength(0);
+  });
+});
+
+describe("undo discard pickup", () => {
+  /** Melded player with a layable pile top, already picked up. */
+  function pickedUp(): GameState {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.turnPhase = "draw";
+    const table = tryCreateMeld([c(7, "h"), c(8, "h"), c(9, "h")])!;
+    s.melds = [table];
+    s.players[s.current].melded = true;
+    s.players[s.current].hand = [c(2, "c")];
+    const top = c(10, "h");
+    s.discard = [top];
+    const r = draw(s, "discard");
+    expect(invalidOf(r.events)).toHaveLength(0);
+    expect(r.state.pendingLayId).toBe(top.id);
+    return r.state;
+  }
+
+  it("returns the card to the pile top and resumes the draw step", () => {
+    const s = pickedUp();
+    const topId = s.pendingLayId!;
+    const handBefore = handIds(s).length;
+    const r = undoPickup(s);
+    expect(invalidOf(r.events)).toHaveLength(0);
+    expect(r.events).toContainEqual(
+      expect.objectContaining({ type: "undoPickup", player: s.current })
+    );
+    const next = r.state;
+    expect(next.pendingLayId).toBeNull();
+    expect(next.turnPhase).toBe("draw");
+    expect(handIds(next)).toHaveLength(handBefore - 1);
+    expect(handIds(next)).not.toContain(topId);
+    // the exact card is back on top of the pile, pile order preserved
+    expect(next.discard[next.discard.length - 1].id).toBe(topId);
+    // the player can draw again — the soft-lock is gone
+    const again = draw(next, "stock");
+    expect(invalidOf(again.events)).toHaveLength(0);
+    expect(again.state.turnPhase).toBe("action");
+  });
+
+  it("unblocks a turn stuck on the must-lay rule", () => {
+    const s = pickedUp();
+    // any discard is blocked while the pickup is pending …
+    const blocked = discard(s, s.players[s.current].hand[0].id);
+    expect(invalidOf(blocked.events)).toHaveLength(1);
+    // … but after the undo the turn can proceed normally
+    const undone = undoPickup(s).state;
+    const drawn = draw(undone, "stock").state;
+    const done = discard(drawn, drawn.players[drawn.current].hand[0].id);
+    expect(invalidOf(done.events)).toHaveLength(0);
+  });
+
+  it("rejects undo with no pending pickup (state untouched)", () => {
+    const plain = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    plain.turnPhase = "action";
+    expect(invalidOf(undoPickup(plain).events)).toHaveLength(1);
+    expect(undoPickup(plain).state).toBe(plain);
+
+    // stock draws never create a pending pickup
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.turnPhase = "draw";
+    s = draw(s, "stock").state;
+    expect(s.pendingLayId).toBeNull();
+    expect(invalidOf(undoPickup(s).events)).toHaveLength(1);
+    expect(undoPickup(s).state).toBe(s);
+  });
+
+  it("rejects undo once anything has been laid after the pickup", () => {
+    const s = pickedUp();
+    const table = s.melds[0];
+    const laid = layoff(s, s.pendingLayId!, table.id).state;
+    expect(laid.pendingLayId).toBeNull();
+    // pending card already used — nothing to return
+    expect(invalidOf(undoPickup(laid).events)).toHaveLength(1);
+
+    // laying an unrelated card also locks the pickup in
+    const s2 = pickedUp();
+    const otherTable = tryCreateMeld([c(4, "d"), c(5, "d"), c(6, "d")])!;
+    s2.melds.push(otherTable);
+    s2.players[s2.current].hand.push(c(7, "d"));
+    const laidOther = layoff(s2, s2.players[s2.current].hand.at(-1)!.id, otherTable.id).state;
+    expect(laidOther.pendingLayId).not.toBeNull();
+    const stuck = undoPickup(laidOther);
+    expect(invalidOf(stuck.events)).toHaveLength(1);
+    expect(stuck.state).toBe(laidOther);
   });
 });
 
