@@ -72,6 +72,15 @@ export const sfx = {
     tone(340, 0.08, { type: "triangle", vol: 0.14, slideTo: 220 });
     tone(520, 0.05, { type: "square", vol: 0.05, delay: 0.05 });
   },
+  /** soft tick when a picked-up card leaves the pile */
+  pickTick() {
+    tone(920, 0.035, { type: "square", vol: 0.045 });
+  },
+  /** soft thock when the flying card lands in its hand slot */
+  land() {
+    tone(210, 0.09, { type: "triangle", vol: 0.16, slideTo: 120 });
+    tone(1250, 0.02, { type: "square", vol: 0.035 });
+  },
   discard() {
     tone(240, 0.09, { type: "square", vol: 0.1, slideTo: 150 });
   },

@@ -4,6 +4,7 @@ import {
   discard,
   discardUseful,
   draw,
+  findDrawnId,
   layMeld,
   layoff,
   meldsLocked,
@@ -461,6 +462,20 @@ describe("sortHand and discardUseful", () => {
     // pure: input untouched, jokers still parked last
     expect(sortCards([...sorted, joker()]).at(-1)!.joker).toBe(true);
     expect(hand).toHaveLength(4);
+  });
+
+  it("findDrawnId spots the newcomer even after an auto-sort", () => {
+    const sorted = sortCards([c(9, "h"), c(2, "d"), c(5, "h"), c(3, "d")]);
+    const newcomer = c(4, "d");
+    // appended → last; re-sorted → mid-hand; both must resolve to newcomer
+    expect(findDrawnId(sorted, [...sorted, newcomer])).toBe(newcomer.id);
+    expect(findDrawnId(sorted, sortCards([...sorted, newcomer]))).toBe(newcomer.id);
+    // jolly-style insert that sorts somewhere in the middle
+    const j = joker();
+    expect(findDrawnId(sorted, sortCards([...sorted, j]))).toBe(j.id);
+    // no newcomer → null
+    expect(findDrawnId(sorted, [...sorted])).toBeNull();
+    expect(findDrawnId(sorted, sortCards([...sorted]))).toBeNull();
   });
 
   it("reorderHand reapplies a dragged card order without touching the cards", () => {

@@ -730,6 +730,14 @@ export function sortHand(state: GameState): ActionResult {
   return { state: s, events: [] };
 }
 
+/** Identify the card a pickup added: the id present after but not before.
+ * Order-independent, so it stays correct when the hand was auto-sorted
+ * (the newcomer can land mid-hand instead of at the end). */
+export function findDrawnId(before: Card[], after: Card[]): number | null {
+  const ids = new Set(before.map((c) => c.id));
+  return after.find((c) => !ids.has(c.id))?.id ?? null;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Manual hand order (drag & drop in the UI — no game effect)          */
 /* ------------------------------------------------------------------ */

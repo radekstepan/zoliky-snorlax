@@ -1,11 +1,18 @@
 import { motion, AnimatePresence, Reorder } from "framer-motion";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { GameState, meldsLocked } from "../game/engine";
 import { Meld, canAddToMeld, coverAll, canJollyClose, findJokerSwap, meldPoints, isCleanRun, jokerView } from "../game/melds";
 import { Card, RULES } from "../game/core";
 import { deviceHovers } from "../utils/device";
 import { kartyCount, kombinaceCount } from "../utils/czech";
+import { sfx } from "../game/sounds";
 import PlayingCard, { CARD_SIZES } from "./PlayingCard";
+
+/** A freshly picked-up human card awaiting its fly-to-slot animation. */
+export interface DrawFlightInfo {
+  cardId: number;
+  from: "stock" | "discard" | "jolly";
+}
 
 interface BoardProps {
   state: GameState;
@@ -26,6 +33,9 @@ interface BoardProps {
   onOpenMenu: () => void;
   muted: boolean;
   onToggleMute: () => void;
+  lastDraw?: DrawFlightInfo | null;
+  onDrawFlightDone?: () => void;
+  onDrawBusyChange?: (busy: boolean) => void;
 }
 
 const hueColor = (hue: number, l = 60) => `hsl(${hue} 80% ${l}%)`;
@@ -173,6 +183,9 @@ function Piles({
   onDraw,
   onTakeJolly,
   canJolly,
+  stockRef,
+  discardRef,
+  jollyRef,
 }: {
   state: GameState;
   humanTurn: boolean;
@@ -180,6 +193,9 @@ function Piles({
   onDraw: (from: "stock" | "discard") => void;
   onTakeJolly: () => void;
   canJolly: boolean;
+  stockRef: React.RefObject<HTMLButtonElement | null>;
+  discardRef: React.RefObject<HTMLButtonElement | null>;
+  jollyRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const canDraw = humanTurn && state.turnPhase === "draw" && !state.skipDraw && state.phase === "play";
   const top = state.discard[state.discard.length - 1];
@@ -188,6 +204,7 @@ function Piles({
       {/* stock */}
       <div className="flex flex-col items-center gap-1.5">
         <motion.button
+          ref={stockRef}
           type="button"
           aria-label="Dobírací balíček"
           onClick={() => canDraw && onDraw("stock")}
@@ -230,6 +247,7 @@ function Piles({
         {state.jollyCard && (
           <div className="flex flex-col items-center gap-1 mt-1">
             <div
+              ref={jollyRef}
               className="rounded-md overflow-hidden border border-neon-gold/50"
               style={{ filter: canJolly ? "drop-shadow(0 0 10px rgba(255,211,25,0.5))" : "opacity(0.55)" }}
               title="Spodní karta — jen pro Jolly Hand"
@@ -251,6 +269,7 @@ function Piles({
       {/* discard */}
       <div className="flex flex-col items-center gap-1.5">
         <motion.button
+          ref={discardRef}
           type="button"
           aria-label="Odhazovací hromádka"
           onClick={() => canDraw && state.discard.length > 0 && onDraw("discard")}
@@ -307,6 +326,9 @@ export default function Board({
   onOpenMenu,
   muted,
   onToggleMute,
+  lastDraw,
+  onDrawFlightDone,
+  onDrawBusyChange,
 }: BoardProps) {
   const human = state.players[0];
   const humanTurn = state.current === 0 && state.phase === "play";
@@ -328,6 +350,174 @@ export default function Board({
   const isNewRound = roundRef.current !== state.round;
   roundRef.current = state.round;
   const prefix = `g${animKey}-`;
+
+  /* ---- draw-flight: conceal → fly → reveal. The drawn card stays out
+     of the rendered hand until it lands, so the eye tracks ONE card. ---- */
+  const stockRef = useRef<HTMLButtonElement | null>(null);
+  const discardRef = useRef<HTMLButtonElement | null>(null);
+  const jollyRef = useRef<HTMLDivElement | null>(null);
+  const handRowRef = useRef<HTMLDivElement | null>(null);
+  const slotRefs = useRef(new Map<number, HTMLDivElement>());
+  interface FlightGeom {
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+    w: number;
+    h: number;
+    apex: number;
+    from: "stock" | "discard" | "jolly";
+  }
+  const [flight, setFlight] = useState<FlightGeom | null>(null);
+  const [landed, setLanded] = useState(false);
+  const landTimer = useRef(0);
+  const flightCard: Card | null = lastDraw
+    ? (human.hand.find((c) => c.id === lastDraw.cardId) ?? null)
+    : null;
+  // Index the card will occupy (live state → correct for auto-sort too).
+  const insertIndex =
+    lastDraw && flightCard
+      ? human.hand.findIndex((c) => c.id === lastDraw.cardId)
+      : -1;
+  // While concealed the hand renders WITHOUT the new card: nothing jumps,
+  // no gap opens early, and drag/click input is hushed for the flight.
+  const concealed =
+    !!lastDraw && !!flightCard && !landed && !isNewRound && insertIndex >= 0;
+  const displayedHand = concealed
+    ? human.hand.filter((c) => c.id !== lastDraw!.cardId)
+    : human.hand;
+  const hushHand = concealed && !landed;
+
+  useEffect(() => {
+    onDrawBusyChange?.(hushHand);
+  }, [hushHand, onDrawBusyChange]);
+
+  useEffect(() => {
+    if (!lastDraw || !flightCard || isNewRound || insertIndex < 0) {
+      if (!lastDraw) {
+        setFlight(null);
+        setLanded(false);
+      }
+      return;
+    }
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      sfx.draw();
+      onDrawFlightDone?.();
+      return;
+    }
+    let cancelled = false;
+    // A new pickup always starts concealed, even if a previous landing
+    // was still showing its glow.
+    setLanded(false);
+    // Two rAFs so the concealed (pre-draw) hand has laid out.
+    const raf = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        const row = handRowRef.current;
+        const src =
+          lastDraw.from === "stock"
+            ? stockRef.current
+            : lastDraw.from === "discard"
+              ? discardRef.current
+              : (jollyRef.current ?? stockRef.current);
+        if (!row || !src) {
+          sfx.draw();
+          onDrawFlightDone?.();
+          return;
+        }
+        const s = src.getBoundingClientRect();
+        const rects = [...slotRefs.current.entries()]
+          .sort((a, b) => a[1].getBoundingClientRect().left - b[1].getBoundingClientRect().left)
+          .map(([, el]) => el.getBoundingClientRect());
+        let w: number;
+        let h: number;
+        let toX: number;
+        let toY: number;
+        if (rects.length > 0) {
+          const first = rects[0];
+          w = first.width;
+          h = first.height;
+          toY = first.top;
+          // step captures the negative fan overlap at any breakpoint
+          const step = rects.length > 1 ? rects[1].left - first.left : w - 26;
+          const overflow = row.scrollWidth > row.clientWidth + 1;
+          // Fit mode: the row re-centers around the newcomer (shift −step/2).
+          // Overflow mode: siblings stay put, the slot opens at k·step.
+          toX = overflow
+            ? first.left + insertIndex * step
+            : first.left - step / 2 + insertIndex * step;
+        } else {
+          // Empty old hand — land in the row center.
+          const rowRect = row.getBoundingClientRect();
+          w = 60;
+          h = w * 1.4;
+          toX = rowRect.left + rowRect.width / 2 - w / 2;
+          toY = rowRect.top + rowRect.height / 2 - h / 2;
+        }
+        if (w === 0) {
+          sfx.draw();
+          onDrawFlightDone?.();
+          return;
+        }
+        const fromX = s.left + s.width / 2 - w / 2;
+        const fromY = s.top + s.height / 2 - h / 2;
+        setLanded(false);
+        setFlight({
+          fromX,
+          fromY,
+          toX,
+          toY,
+          w,
+          h,
+          apex: Math.min(fromY, toY) - 84,
+          from: lastDraw.from,
+        });
+        sfx.pickTick();
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastDraw?.cardId, lastDraw?.from, state.round, animKey]);
+
+  // Card vanished (round change) mid-flight — bail out cleanly.
+  useEffect(() => {
+    if (lastDraw && !flightCard) {
+      window.clearTimeout(landTimer.current);
+      setFlight(null);
+      setLanded(false);
+      onDrawFlightDone?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastDraw?.cardId, flightCard === null]);
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(landTimer.current);
+    },
+    []
+  );
+
+  const beginLanding = () => {
+    if (landed) return;
+    setLanded(true);
+    sfx.land();
+    // Glide the row if the new slot landed out of view — the hand
+    // literally centers itself around the newcomer.
+    requestAnimationFrame(() => {
+      slotRefs.current
+        .get(lastDraw?.cardId ?? -1)
+        ?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+    });
+    // Let the pop + glow read, then hand control back to the parent.
+    window.clearTimeout(landTimer.current);
+    landTimer.current = window.setTimeout(() => {
+      setFlight(null);
+      onDrawFlightDone?.();
+    }, 360);
+  };
 
   const canJolly = useMemo(() => {
     if (!humanTurn || state.phase !== "play") return false;
@@ -411,7 +601,7 @@ export default function Board({
       {/* center: piles + status + log + table melds */}
       <div className="flex-1 min-h-0 px-3 sm:px-5 py-2 flex flex-col lg:flex-row gap-3">
         <div className="flex lg:flex-col items-center justify-center gap-3 lg:gap-2 lg:w-72 shrink-0">
-          <Piles state={state} humanTurn={humanTurn} prefix={prefix} onDraw={onDraw} onTakeJolly={onTakeJolly} canJolly={canJolly} />
+          <Piles state={state} humanTurn={humanTurn} prefix={prefix} onDraw={onDraw} onTakeJolly={onTakeJolly} canJolly={canJolly} stockRef={stockRef} discardRef={discardRef} jollyRef={jollyRef} />
           <AnimatePresence mode="wait">
             <motion.div
               key={state.current + "-" + state.turnPhase + "-" + (thinkingBot ?? "x")}
@@ -488,7 +678,7 @@ export default function Board({
       {/* human zone */}
       <div className="shrink-0 px-3 sm:px-5 pb-3 pt-1">
         <div
-          className="panel px-3 py-2.5 transition-shadow"
+          className={`panel px-3 py-2.5 transition-shadow${landed ? " hand-breathe" : ""}`}
           style={{
             boxShadow: humanTurn
               ? "0 0 24px rgba(5,217,232,0.28), inset 0 1px 0 rgba(255,255,255,0.07)"
@@ -528,7 +718,7 @@ export default function Board({
                 type="button"
                 data-testid="btn-sort"
                 onClick={onSort}
-                disabled={!humanTurn}
+                disabled={!humanTurn || hushHand}
                 aria-pressed={sortOn}
                 title={sortOn ? "Automatické třídění zapnuto — nové karty se zařadí samy" : "Třídit karty (zapne automatické řazení nových karet)"}
                 className={`btn-arcade px-2.5 py-2 text-[8px] ${sortOn ? "btn-green" : "btn-ghost"}`}
@@ -561,20 +751,33 @@ export default function Board({
             <Reorder.Group
               as="div"
               axis="x"
-              values={human.hand}
+              values={displayedHand}
               onReorder={(cards) => onReorderHand(cards.map((c) => c.id))}
-              className="fan-hand flex justify-center mt-3 overflow-x-auto no-scrollbar pt-6 pb-4 px-2"
+              ref={(el: unknown) => {
+                handRowRef.current = el as HTMLDivElement | null;
+              }}
+              className={`fan-hand flex justify-center mt-3 overflow-x-auto no-scrollbar pt-6 pb-4 px-2${hushHand ? " pointer-events-none" : ""}`}
               data-testid="player-hand"
             >
-              {human.hand.map((c, i) => {
+              {displayedHand.map((c, i) => {
                 const isSel = selected.includes(c.id);
+                // Landing card: mounts fresh with no entrance drop — the CSS
+                // pop + glow (fill backwards, no persistence) sells the
+                // arrival while framer keeps full control afterwards.
+                const justLanded = landed && lastDraw?.cardId === c.id;
                 return (
                   <Reorder.Item
                     as="div"
                     key={c.id}
                     value={c}
+                    ref={(el: unknown) => {
+                      if (el) slotRefs.current.set(c.id, el as HTMLDivElement);
+                      else slotRefs.current.delete(c.id);
+                    }}
+                    layout
+                    transition={{ type: "spring", stiffness: 320, damping: 30 }}
                     className="hand-draggable relative shrink-0"
-                    style={{ zIndex: isSel ? 50 : i }}
+                    style={{ zIndex: justLanded ? 60 : isSel ? 50 : i }}
                     whileDrag={{ scale: 1.12, zIndex: 100 }}
                     onDragStart={() => {
                       dragMoved.current = true;
@@ -595,7 +798,9 @@ export default function Board({
                       hoverLift={canHover}
                       lifted={isSel}
                       dealDelay={isNewRound ? Math.min(i * 0.04, 0.6) : 0}
-                      zIndex={isSel ? 50 : i}
+                      noAnim={justLanded}
+                      zIndex={justLanded ? 60 : isSel ? 50 : i}
+                      className={justLanded ? "card-land-pop card-land-glow" : ""}
                       onClick={() => {
                         if (!dragMoved.current) onToggleCard(c.id);
                       }}
@@ -603,7 +808,7 @@ export default function Board({
                   </Reorder.Item>
                 );
               })}
-              {human.hand.length === 0 && (
+              {displayedHand.length === 0 && (
                 <span className="font-pixel text-[8px] opacity-40 py-6">Ruka je prázdná…</span>
               )}
             </Reorder.Group>
@@ -612,6 +817,14 @@ export default function Board({
               {human.hand.map((c, i) => {
                 const isSel = selected.includes(c.id);
                 return (
+                  <div
+                    key={c.id}
+                    ref={(el) => {
+                      if (el) slotRefs.current.set(c.id, el);
+                      else slotRefs.current.delete(c.id);
+                    }}
+                    className="relative shrink-0"
+                  >
                   <PlayingCard
                     key={c.id}
                     card={c}
@@ -624,6 +837,7 @@ export default function Board({
                     dealDelay={isNewRound ? Math.min(i * 0.04, 0.6) : 0}
                     zIndex={isSel ? 50 : i}
                   />
+                  </div>
                 );
               })}
               {human.hand.length === 0 && (
@@ -633,6 +847,70 @@ export default function Board({
           )}
         </div>
       </div>
+
+      {/* flying pickup: exactly one card travels pile → slot, then hands
+          off to the real card's pop (no crossfade ghost) */}
+      {flight && flightCard && (
+        <motion.div
+          key={`draw-flight-${flightCard.id}`}
+          data-testid="draw-flight"
+          style={{
+            position: "fixed",
+            left: 0,
+            top: 0,
+            width: flight.w,
+            height: flight.h,
+            zIndex: 80,
+            pointerEvents: "none",
+            perspective: 800,
+            filter: "drop-shadow(0 12px 24px rgba(0,0,0,0.55))",
+          }}
+          initial={{ x: flight.fromX, y: flight.fromY, scale: 0.62, rotate: -12, opacity: 0 }}
+          animate={
+            landed
+              ? { x: flight.toX, y: flight.toY, scale: 0.9, rotate: 0, opacity: 0 }
+              : {
+                  x: flight.toX,
+                  y: [flight.fromY, flight.apex, flight.toY],
+                  scale: [0.62, 1, 1.03],
+                  rotate: [-12, 3, 0],
+                  opacity: [0, 1, 1],
+                }
+          }
+          transition={
+            landed
+              ? { duration: 0.12, ease: "easeOut" }
+              : { duration: 0.6, ease: [0.22, 0.9, 0.3, 1] }
+          }
+          onAnimationComplete={() => {
+            if (!landed) beginLanding();
+            else setFlight(null);
+          }}
+        >
+          {flight.from === "stock" ? (
+            <motion.div
+              style={{ width: "100%", height: "100%", position: "relative", transformStyle: "preserve-3d" }}
+              initial={{ rotateY: 0 }}
+              animate={{ rotateY: 180 }}
+              transition={{ duration: 0.6, ease: "easeInOut" }}
+            >
+              <div style={{ position: "absolute", inset: 0, backfaceVisibility: "hidden" }}>
+                <div className="card-back" style={{ width: "100%", height: "100%" }} />
+              </div>
+              <div style={{ position: "absolute", inset: 0, backfaceVisibility: "hidden", transform: "rotateY(180deg)" }}>
+                <PlayingCard card={flightCard} size="lg" noAnim style={{ width: "100%" }} />
+              </div>
+            </motion.div>
+          ) : (
+            <PlayingCard
+              card={flightCard}
+              size="lg"
+              noAnim
+              style={{ width: "100%" }}
+            />
+          )}
+        </motion.div>
+      )}
     </div>
   );
 }

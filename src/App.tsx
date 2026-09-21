@@ -5,6 +5,7 @@ import {
   ActionResult,
   draw,
   takeJolly,
+  findDrawnId,
   layMeld,
   layoff,
   swapJoker,
@@ -20,7 +21,7 @@ import { RULES } from "./game/core";
 import { planBotTurn, BotAction } from "./game/bot";
 import { sfx } from "./game/sounds";
 import { bodyCount } from "./utils/czech";
-import Board from "./components/Board";
+import Board, { DrawFlightInfo } from "./components/Board";
 import {
   StartScreen,
   StartConfig,
@@ -56,6 +57,11 @@ export default function App() {
   const [stepText, setStepText] = useState("");
   const [muted, setMuted] = useState(sfx.muted);
   const [gameSeq, setGameSeq] = useState(0);
+  // Tracks the most recent human pickup so Board can fly the card from
+  // the pile to its slot before revealing it in the hand.
+  const [lastDraw, setLastDraw] = useState<DrawFlightInfo | null>(null);
+  // True while a pickup flight is in the air — human hand input hushes.
+  const [drawBusy, setDrawBusy] = useState(false);
   // Sort toggle: while on, every new card in the human hand slots into
   // sorted order automatically. Manual drag-reorder switches it back off.
   const [autoSort, setAutoSort] = useState(false);
@@ -91,7 +97,9 @@ export default function App() {
       for (const e of events) {
         switch (e.type) {
           case "draw":
-            sfx.draw();
+            // Human pickups play tick-at-launch + thock-at-landing from the
+            // Board flight; bots keep the classic one-shot.
+            if (e.player !== 0) sfx.draw();
             break;
           case "discard":
             sfx.discard();
@@ -128,7 +136,7 @@ export default function App() {
             break;
           }
           case "jolly":
-            sfx.swap();
+            if (e.player !== 0) sfx.swap();
             toast(`${game.players[e.player].name} bere JOLLY kartu!`, "info");
             break;
           case "roundEnd":
@@ -301,6 +309,8 @@ export default function App() {
       if (autoSortRef.current) fresh.players[0].hand = sortCards(fresh.players[0].hand);
       setGame(fresh);
       setSelected([]);
+      setLastDraw(null);
+      setDrawBusy(false);
       setShowRules(false);
       setShowPause(false);
       setShowRoundEnd(false);
@@ -321,6 +331,8 @@ export default function App() {
     setBotBusy(null);
     setGame(null);
     setSelected([]);
+    setLastDraw(null);
+    setDrawBusy(false);
     setShowPause(false);
     setShowRoundEnd(false);
     setShowGameEnd(false);
@@ -336,6 +348,7 @@ export default function App() {
     setShowRoundEnd(false);
     setShowGameEnd(false);
     setSelected([]);
+    setLastDraw(null);
     const fresh = createGame(config);
     if (autoSortRef.current) fresh.players[0].hand = sortCards(fresh.players[0].hand);
     setGame(fresh);
@@ -349,6 +362,7 @@ export default function App() {
     if (autoSortRef.current) res.state.players[0].hand = sortCards(res.state.players[0].hand);
     setGame(res.state);
     setSelected([]);
+    setLastDraw(null);
     setShowRoundEnd(false);
     setGameSeq((s) => s + 1);
     sfx.click();
@@ -373,7 +387,13 @@ export default function App() {
     const res = draw(game, from);
     if (!res.events.some((e) => e.type === "invalid")) {
       setSelected([]);
+      // Identify the newcomer by id BEFORE auto-sorting: after a sort the
+      // last slot holds whatever sorts last, not the drawn card.
+      const drawnId =
+        findDrawnId(game.players[0].hand, res.state.players[0].hand) ??
+        res.state.players[0].hand[res.state.players[0].hand.length - 1].id;
       if (autoSortRef.current) applyAutoSort(res.state);
+      setLastDraw({ cardId: drawnId, from });
       setGame(res.state);
     }
     handleEvents(res.events);
@@ -384,6 +404,8 @@ export default function App() {
     const res = layMeld(game, selected);
     if (!res.events.some((e) => e.type === "invalid")) {
       setSelected([]);
+      setLastDraw(null);
+      setDrawBusy(false);
       setGame(res.state);
     }
     handleEvents(res.events);
@@ -394,6 +416,8 @@ export default function App() {
     const res = discard(game, selected[0]);
     if (!res.events.some((e) => e.type === "invalid")) {
       setSelected([]);
+      setLastDraw(null);
+      setDrawBusy(false);
       setGame(res.state);
     }
     handleEvents(res.events);
@@ -401,6 +425,7 @@ export default function App() {
 
   const doSort = () => {
     if (!game || game.current !== 0 || game.phase !== "play") return;
+    if (drawBusy) return;
     if (autoSortRef.current) {
       // Toggle off — keep the current order.
       setAutoSort(false);
@@ -416,10 +441,13 @@ export default function App() {
 
   const doReorderHand = (orderedIds: number[]) => {
     if (!game || game.current !== 0 || game.phase !== "play") return;
+    if (drawBusy) return;
     const res = reorderHand(game, orderedIds);
     if (res.state !== game) {
       // A manual order wins over the toggle.
       if (autoSortRef.current) setAutoSort(false);
+      setLastDraw(null);
+      setDrawBusy(false);
       setGame(res.state);
     }
   };
@@ -429,7 +457,11 @@ export default function App() {
     const res = takeJolly(game);
     if (!res.events.some((e) => e.type === "invalid")) {
       setSelected([]);
+      const drawnId =
+        findDrawnId(game.players[0].hand, res.state.players[0].hand) ??
+        res.state.players[0].hand[res.state.players[0].hand.length - 1].id;
       if (autoSortRef.current) applyAutoSort(res.state);
+      setLastDraw({ cardId: drawnId, from: "jolly" });
       setGame(res.state);
     }
     handleEvents(res.events);
@@ -437,6 +469,7 @@ export default function App() {
 
   const doHint = () => {
     if (!game || !humanTurn || game.turnPhase !== "action") return;
+    if (drawBusy) return;
     const me = game.players[0];
     // Jolly rush: lay everything but one card, then discard the last one.
     if (game.jollyRush) {
@@ -543,6 +576,9 @@ export default function App() {
           onHint={doHint}
           onMeldClick={doMeldClick}
           onReorderHand={doReorderHand}
+          lastDraw={lastDraw}
+          onDrawFlightDone={() => setLastDraw(null)}
+          onDrawBusyChange={setDrawBusy}
           onOpenMenu={() => {
             paused.current = true;
             setShowPause(true);

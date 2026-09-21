@@ -39,13 +39,17 @@ test.describe("game flow", () => {
     await startTwoPlayerEasyGame(page);
     await expect(humanStatus(page)).toBeVisible({ timeout: 60000 });
     // discarding needs the action phase — draw first if we must
-    if (await page.getByText("TÁHNI SI", { exact: true }).isVisible()) {
-      await page.getByRole("button", { name: "Dobírací balíček" }).click();
-      await expect(page.getByText("JSI NA ŘADĚ", { exact: true })).toBeVisible({
-        timeout: 15000,
-      });
-    }
     const hand = page.getByTestId("player-hand");
+    if (await page.getByText("TÁHNI SI", { exact: true }).isVisible()) {
+      const before = await hand.locator(":scope > *").count();
+      await page.getByRole("button", { name: "Dobírací balíček" }).click();
+      // the pickup flight lands the card in its slot — wait for it
+      await expect
+        .poll(async () => hand.locator(":scope > *").count(), {
+          timeout: 15000,
+        })
+        .toBe(before + 1);
+    }
     await hand.locator(":scope > *").first().click();
     await expect(page.getByTestId("btn-lay")).toHaveText(/VYLOŽIT \(1\)/);
     await expect(page.getByTestId("btn-discard")).toBeEnabled();
