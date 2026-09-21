@@ -184,7 +184,7 @@ export function StartScreen({
       </motion.div>
 
       <div className="font-pixel text-[6.5px] opacity-40 mt-5 text-center leading-relaxed">
-        2 BALÍČKY + 4 ŽOLÍCI · PRVNÍ VÝKLAD {RULES.FIRST_MELD_POINTS} BODŮ + ČISTÁ POSTUPKA · -1 BOD ZA KARTU
+        2 BALÍČKY + 4 ŽOLÍCI · PRVNÍ VÝKLAD {RULES.FIRST_MELD_POINTS} BODŮ + ČISTÁ POSTUPKA · −1 BOD ZA KARTU (−2 PŘI JOLLY)
       </div>
     </div>
   );
@@ -216,9 +216,11 @@ export function RulesModal({ onClose }: { onClose: () => void }) {
       <RuleSection title="Cíl hry">
         <p>
           Cílem je zbavit se všech karet z ruky skládáním postupek, trojic a čtveřic.
-          Kolo končí, když má hráč na konci tahu jedinou kartu a dramaticky ji odhodí{" "}
-          <b>lícem dolů</b>. Ostatní pak dostanou <b>−1 bod za každou kartu v ruce</b>.
-          Skóre jen klesá — hra končí, když někdo spadne pod cílovou hranici, a{" "}
+          Kolo zavírá hráč, který se zbaví poslední karty — nejčastěji ji na konci tahu{" "}
+          <b>odhodí lícem dolů</b>, případně ji vyloží či přiloží jako poslední kartu.
+          Zavírající má za kolo <b>0</b>, ostatní dostanou <b>−1 bod za každou kartu v ruce</b>{" "}
+          (<b>−2 při Jolly Hand</b>). Dojdou-li balíček i hromádka, kolo končí bez zavření.
+          Skóre jen klesá — hra končí, když někdo spadne na zvolený limit nebo níž, a{" "}
           <b>vítězí hráč s nejvyšším (nejméně záporným) skóre</b>.
         </p>
       </RuleSection>
@@ -237,14 +239,14 @@ export function RulesModal({ onClose }: { onClose: () => void }) {
       </RuleSection>
 
       <RuleSection title="Průběh tahu">
-        <p>1. <b>Táhnutí</b> — kartu z balíčku, vrchní kartu z hromádky (musí se <b>hned vyložit</b>), nebo spodní kartu při Jolly Hand.</p>
-        <p>2. <b>Vykládání</b> — až po {RULES.MELD_WAIT_ROUNDS}. kole: kombinace, přikládání, výměna žolíka.</p>
-        <p>3. <b>Odhození</b> — tah končí odhozením jedné karty na hromádku.</p>
+        <p>1. <b>Táhnutí</b> — kartu z balíčku, vrchní kartu z hromádky (musí se <b>v tom tahu vyložit</b>), nebo spodní kartu při Jolly Hand. Předák zahajuje kolo jen odhozením, netáhne si.</p>
+        <p>2. <b>Vykládání</b> — první {RULES.MELD_WAIT_ROUNDS} kola se jen táhne a odhazuje; kombinace, přikládání a výměna žolíka jsou možné až od {RULES.MELD_WAIT_ROUNDS + 1}. kola. Přikládat smí jen hráč s vlastním výkladem a vyměněného žolíka je nutné <b>v tom samém tahu využít</b>.</p>
+        <p>3. <b>Odhození</b> — tah končí odhozením jedné karty na hromádku (výjimka: zavření vyložením či přiložením poslední karty).</p>
       </RuleSection>
 
       <RuleSection title="Kombinace">
         <p>
-          <b>Postupka</b> — alespoň 3 po sobě jdoucí karty stejné barvy (např. ♥7, ♥8, ♥9).
+          <b>Postupka</b> — 3 až 13 po sobě jdoucích karet stejné barvy (např. ♥7, ♥8, ♥9).
           Eso může být nejnižší (A,2,3) i nejvyšší (Q,K,A), ale nikdy <b>„za rohem“</b> (K,A,2 neplatí).
         </p>
         <p>
@@ -252,36 +254,41 @@ export function RulesModal({ onClose }: { onClose: () => void }) {
         </p>
         <p>
           <b>Žolík</b> nahrazuje libovolnou kartu, ale kombinace s žolíkem není „čistá“.
-          V kombinaci smí být žolíků méně než ostatních karet a <b>dva žolíci nesmí ležet vedle sebe</b>.
+          V kombinaci smí být žolíků méně než ostatních karet a v postupce <b>dva žolíci nesmí ležet vedle sebe</b>.
         </p>
       </RuleSection>
 
       <RuleSection title="První výklad — 36 bodů + čistá postupka">
         <p>
-          Při prvním vyložení musí mít hráč kombinace v součtu alespoň{" "}
+          Při prvním vyložení musí mít hráč kombinace vyložené v jednom tahu v součtu alespoň{" "}
           <b>{RULES.FIRST_MELD_POINTS} bodů</b> a součástí musí být alespoň jedna{" "}
-          <b>čistá postupka</b> (postupka bez žolíka). Body: 2–10 = hodnota karty,
-          J/Q/K = 10, eso nízké (A,2,3) = <b>1 bod</b> (např. A♥,2♥,3♥ = 6 bodů),
-          eso vysoké (Q,K,A) = 10, žolík = hodnota karty, kterou nahrazuje
-          (např. 7♠,8♠,🃏,10♠,J♠ = 44 bodů).
+          <b>čistá postupka</b> (alespoň 3 karty za sebou bez žolíka). Body: 2–10 = hodnota karty,
+          J/Q/K = 10 každá, eso nízké (A,2,3) = <b>1 bod</b> (např. A♥,2♥,3♥ = 6 bodů),
+          eso vysoké = 10 (např. Q,K,A = 30), žolík = hodnota karty, kterou nahrazuje
+          (žolík za nízké eso = 1; např. 7♠,8♠,🃏,10♠,J♠ = 44 bodů).
         </p>
       </RuleSection>
 
       <RuleSection title="Přikládání a výměna žolíka">
         <p>
-          Vyložený hráč může <b>přikládat</b> karty do kterékoliv kombinace na stole.
+          Vyložený hráč může <b>přikládat</b> karty do vyhovujících kombinací na stole:
+          do postupky jen navazující kartu stejné barvy na kterýkoliv konec, do trojice či čtveřice
+          kartu stejné hodnoty s dosud chybějící barvou (nejvýše 4 karty).
+          Přiložit lze i žolíka, pokud jich zůstane méně než ostatních karet a v postupce
+          neskončí vedle jiného žolíka.
           Pokud v kombinaci leží žolík, může ho kterýkoliv hráč <b>vyměnit</b> za skutečnou
           kartu, kterou žolík zastupuje — ale vyměněného žolíka musí <b>v tom samém tahu využít</b>.
-          Žolíka z trojice lze vzít, až když v ní budou <b>všechny 4 barvy</b>.
+          Žolíka z trojice lze vzít, až když výměnou vzniknou <b>všechny 4 barvy</b>.
         </p>
       </RuleSection>
 
       <RuleSection title="Jolly Hand">
         <p>
-          Kdo má v ruce stále <b>12 karet</b>, může si místo táhnutí vzít spodní kartu
-          pod balíčkem — ale v tom tahu <b>musí vyložit všechny ostatní karty a poslední
-          kartou kolo zavřít (odhodit ji)</b>.
-          Ostatním se pak počítá <b>−2 body za každou kartu v ruce</b>. Vzácné, ale dramatické…
+          Kdo má ve fázi táhnutí v ruce stále <b>12 karet</b> (ne v zahajovacím tahu předáka),
+          může si místo táhnutí vzít spodní kartu pod balíčkem — v tom tahu pak <b>musí vyložit
+          celou ruku a kolo zavřít</b> (zbytek vyložit a poslední kartu odhodit, případně vyložit vše).
+          První výklad se přitom nehlídá. Ostatním se pak počítá <b>−2 body za každou kartu v ruce</b>.
+          Vzácné, ale dramatické…
         </p>
       </RuleSection>
 
@@ -294,7 +301,8 @@ export function RulesModal({ onClose }: { onClose: () => void }) {
 
       <RuleSection title="Dojde-li balíček">
         <p>
-          Hromádka se <b>bez míchání obrátí</b> a stane se novým balíčkem.
+          Dojde-li balíček, hromádka se <b>bez míchání obrátí</b> a stane se novým balíčkem.
+          Nezbyde-li ani na to dost karet, kolo končí bez zavření a všichni počítají karty v ruce.
         </p>
       </RuleSection>
 
