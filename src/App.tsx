@@ -75,6 +75,9 @@ export default function App() {
   const [lastBotDiscard, setLastBotDiscard] = useState<BotDiscardFlightInfo | null>(null);
   const lastBotDiscardRef = useRef(lastBotDiscard);
   lastBotDiscardRef.current = lastBotDiscard;
+  // Committed closing-discard top: the last card of a discard-close stays
+  // face-down and slightly offset on the pile until the next round.
+  const [closingTopId, setClosingTopId] = useState<number | null>(null);
   // Continuation of the bot chain while a flight is in the air.
   const pendingBot = useRef<{ state: GameState; actions: BotAction[]; idx: number } | null>(null);
   // True while a pickup flight is in the air — human hand input hushes.
@@ -257,6 +260,10 @@ export default function App() {
             setGame(res.state);
             handleEvents(res.events);
             if (res.state.phase !== "play") {
+              if (res.events.some((e) => e.type === "close" && e.faceDown)) {
+                const topId = res.state.discard[res.state.discard.length - 1]?.id ?? null;
+                if (topId !== null) setClosingTopId(topId);
+              }
               setBotBusy(null);
               return;
             }
@@ -268,7 +275,12 @@ export default function App() {
             return;
           }
           pendingBot.current = { state, actions, idx };
-          setLastBotDiscard({ playerId: state.current, cardId: a.cardId, card });
+          setLastBotDiscard({
+            playerId: state.current,
+            cardId: a.cardId,
+            card,
+            isClosing: state.players[state.current]?.hand.length === 1,
+          });
           return;
         }
         // Bot pickup: commit immediately, then conceal until landing
@@ -416,6 +428,10 @@ export default function App() {
     setGame(res.state);
     handleEvents(res.events);
     if (res.state.phase !== "play") {
+      if (res.events.some((e) => e.type === "close" && e.faceDown)) {
+        const topId = res.state.discard[res.state.discard.length - 1]?.id ?? null;
+        if (topId !== null) setClosingTopId(topId);
+      }
       setBotBusy(null);
       return;
     }
@@ -501,6 +517,7 @@ export default function App() {
       setLastDiscard(null);
       setLastBotDraw(null);
       setLastBotDiscard(null);
+      setClosingTopId(null);
       pendingBot.current = null;
       setDrawBusy(false);
       setShowRules(false);
@@ -527,6 +544,7 @@ export default function App() {
     setLastDiscard(null);
     setLastBotDraw(null);
     setLastBotDiscard(null);
+    setClosingTopId(null);
     pendingBot.current = null;
     setDrawBusy(false);
     setShowPause(false);
@@ -548,6 +566,7 @@ export default function App() {
     setLastDiscard(null);
     setLastBotDraw(null);
     setLastBotDiscard(null);
+    setClosingTopId(null);
     pendingBot.current = null;
     const fresh = createGame(config);
     if (autoSortRef.current) fresh.players[0].hand = sortCards(fresh.players[0].hand);
@@ -566,6 +585,7 @@ export default function App() {
     setLastDiscard(null);
     setLastBotDraw(null);
     setLastBotDiscard(null);
+    setClosingTopId(null);
     pendingBot.current = null;
     setShowRoundEnd(false);
     setGameSeq((s) => s + 1);
@@ -627,7 +647,11 @@ export default function App() {
     if (!card) return;
     setSelected([]);
     setLastDraw(null);
-    setLastDiscard({ cardId: card.id, card });
+    setLastDiscard({
+      cardId: card.id,
+      card,
+      isClosing: game.players[0].hand.length === 1,
+    });
   };
 
   /** Commit a staged human discard once its ghost lands on the pile. */
@@ -647,6 +671,10 @@ export default function App() {
       setSelected([]);
       setLastDraw(null);
       setDrawBusy(false);
+      if (res.events.some((e) => e.type === "close" && e.faceDown)) {
+        const topId = res.state.discard[res.state.discard.length - 1]?.id ?? null;
+        if (topId !== null) setClosingTopId(topId);
+      }
       setGame(res.state);
     }
     handleEvents(res.events);
@@ -818,6 +846,7 @@ export default function App() {
           onBotDrawFlightDone={handleBotDrawDone}
           lastBotDiscard={lastBotDiscard}
           onBotDiscardFlightDone={commitBotDiscard}
+          closingTopId={closingTopId}
           onOpenMenu={() => {
             paused.current = true;
             setShowPause(true);

@@ -15,10 +15,13 @@ export interface DrawFlightInfo {
 }
 
 /** A human discard awaiting its fly-to-pile animation (fly-then-commit:
-    the engine discard runs only after the ghost lands on the pile). */
+    the engine discard runs only after the ghost lands on the pile).
+    `isClosing` marks the game-closing last card: it flies upside-down
+    (face-down) and lands slightly offset on the pile, like a real jolly close. */
 export interface DiscardFlightInfo {
   cardId: number;
   card: Card;
+  isClosing?: boolean;
 }
 
 /** A bot pickup awaiting its fly-to-chip animation (commit-then-conceal:
@@ -33,11 +36,13 @@ export interface BotDrawFlightInfo {
 }
 
 /** A staged bot discard awaiting its fly-to-pile animation (fly-then-commit:
-    the engine discard runs only after the ghost lands on the pile). */
+    the engine discard runs only after the ghost lands on the pile).
+    `isClosing` marks the game-closing last card (upside-down, offset). */
 export interface BotDiscardFlightInfo {
   playerId: number;
   cardId: number;
   card: Card;
+  isClosing?: boolean;
 }
 
 interface BoardProps {
@@ -68,6 +73,9 @@ interface BoardProps {
   onBotDrawFlightDone?: () => void;
   lastBotDiscard?: BotDiscardFlightInfo | null;
   onBotDiscardFlightDone?: () => void;
+  /** Committed closing-discard top (face-down, slightly offset on the pile).
+      Set by the parent when a discard closes the round; cleared on next round. */
+  closingTopId?: number | null;
 }
 
 const hueColor = (hue: number, l = 60) => `hsl(${hue} 80% ${l}%)`;
@@ -222,6 +230,7 @@ function Piles({
   discardRef,
   jollyRef,
   pilePopId,
+  closingTopId,
 }: {
   state: GameState;
   humanTurn: boolean;
@@ -233,9 +242,11 @@ function Piles({
   discardRef: React.RefObject<HTMLButtonElement | null>;
   jollyRef: React.RefObject<HTMLDivElement | null>;
   pilePopId?: number | null;
+  closingTopId?: number | null;
 }) {
   const canDraw = humanTurn && state.turnPhase === "draw" && !state.skipDraw && state.phase === "play";
   const top = state.discard[state.discard.length - 1];
+  const isClosingTop = closingTopId != null && !!top && top.id === closingTopId;
   return (
     <div className="flex items-center justify-center gap-6 sm:gap-10">
       {/* stock */}
@@ -315,6 +326,19 @@ function Piles({
           whileTap={canDraw && state.discard.length > 0 ? { scale: 0.95 } : undefined}
         >
           {top ? (
+            isClosingTop ? (
+              <div
+                key={top.id}
+                data-testid="closing-pile-top"
+                className="card-close-offset"
+                style={{ filter: canDraw ? "drop-shadow(0 0 14px rgba(255,211,25,0.45))" : undefined }}
+              >
+                <div
+                  className={`card-back rounded-lg ${top.id === pilePopId ? "card-discard-pop card-discard-glow" : ""}`}
+                  style={{ width: CARD_SIZES.md.w, aspectRatio: "5/7" }}
+                />
+              </div>
+            ) : (
             <div
               key={top.id}
               style={{ filter: canDraw ? "drop-shadow(0 0 14px rgba(255,211,25,0.45))" : undefined }}
@@ -327,6 +351,7 @@ function Piles({
                 className={top.id === pilePopId ? "card-discard-pop card-discard-glow" : ""}
               />
             </div>
+            )
           ) : (
             <div
               className="rounded-lg border-2 border-dashed border-white/20 flex items-center justify-center"
@@ -381,6 +406,7 @@ export default function Board({
   onBotDrawFlightDone,
   lastBotDiscard,
   onBotDiscardFlightDone,
+  closingTopId,
 }: BoardProps) {
   const human = state.players[0];
   const humanTurn = state.current === 0 && state.phase === "play";
@@ -461,6 +487,10 @@ export default function Board({
   // Ghost snapshot: survives the parent clearing lastDiscard on commit so
   // the fade-out can finish.
   const [discardGhost, setDiscardGhost] = useState<Card | null>(null);
+  // Whether the in-flight ghost is the closing card (upside-down, face-down).
+  // Stored alongside the ghost so the fade-out keeps its look after the
+  // parent clears lastDiscard on commit.
+  const [discardClosing, setDiscardClosing] = useState(false);
   useEffect(() => {
     if (pilePopId === null) return;
     const t = window.setTimeout(() => setPilePopId(null), 500);
@@ -613,6 +643,7 @@ export default function Board({
       if (!lastDiscard && !discardLanded) {
         setDiscardFlight(null);
         setDiscardGhost(null);
+        setDiscardClosing(false);
         setDiscardLanded(false);
         discardFromRef.current = null;
       }
@@ -647,6 +678,7 @@ export default function Board({
         const toX = d.left + d.width / 2 - w / 2;
         const toY = d.top + d.height / 2 - h / 2;
         setDiscardGhost(lastDiscard.card);
+        setDiscardClosing(!!lastDiscard.isClosing);
         setDiscardFlight({
           fromX,
           fromY,
@@ -672,6 +704,7 @@ export default function Board({
       window.clearTimeout(discardTimer.current);
       setDiscardFlight(null);
       setDiscardGhost(null);
+      setDiscardClosing(false);
       setDiscardLanded(false);
       discardFromRef.current = null;
       onDiscardFlightDone?.();
@@ -693,6 +726,7 @@ export default function Board({
     discardTimer.current = window.setTimeout(() => {
       setDiscardFlight(null);
       setDiscardGhost(null);
+      setDiscardClosing(false);
     }, 320);
   };
 
@@ -823,6 +857,7 @@ export default function Board({
   const [botDiscardFlight, setBotDiscardFlight] = useState<BotFlightGeom | null>(null);
   const [botDiscardLanded, setBotDiscardLanded] = useState(false);
   const [botDiscardGhost, setBotDiscardGhost] = useState<Card | null>(null);
+  const [botDiscardClosing, setBotDiscardClosing] = useState(false);
   const botDiscardTimer = useRef(0);
 
   useEffect(() => {
@@ -830,6 +865,7 @@ export default function Board({
       if (!lastBotDiscard && !botDiscardLanded) {
         setBotDiscardFlight(null);
         setBotDiscardGhost(null);
+        setBotDiscardClosing(false);
         setBotDiscardLanded(false);
       }
       return;
@@ -858,6 +894,7 @@ export default function Board({
           return;
         }
         setBotDiscardGhost(lastBotDiscard.card);
+        setBotDiscardClosing(!!lastBotDiscard.isClosing);
         setBotDiscardFlight({
           fromX: s.left + s.width / 2 - w / 2,
           fromY: s.top + s.height / 2 - h / 2,
@@ -882,6 +919,7 @@ export default function Board({
       window.clearTimeout(botDiscardTimer.current);
       setBotDiscardFlight(null);
       setBotDiscardGhost(null);
+      setBotDiscardClosing(false);
       setBotDiscardLanded(false);
       onBotDiscardFlightDone?.();
     }
@@ -897,6 +935,7 @@ export default function Board({
     botDiscardTimer.current = window.setTimeout(() => {
       setBotDiscardFlight(null);
       setBotDiscardGhost(null);
+      setBotDiscardClosing(false);
     }, 320);
   };
 
@@ -996,7 +1035,7 @@ export default function Board({
       {/* center: piles + status + log + table melds */}
       <div className="flex-1 min-h-0 px-3 sm:px-5 py-2 flex flex-col lg:flex-row gap-3">
         <div className="flex lg:flex-col items-center justify-center gap-3 lg:gap-2 lg:w-72 shrink-0">
-          <Piles state={state} humanTurn={humanTurn} prefix={prefix} onDraw={onDraw} onTakeJolly={onTakeJolly} canJolly={canJolly} stockRef={stockRef} discardRef={discardRef} jollyRef={jollyRef} pilePopId={pilePopId} />
+          <Piles state={state} humanTurn={humanTurn} prefix={prefix} onDraw={onDraw} onTakeJolly={onTakeJolly} canJolly={canJolly} stockRef={stockRef} discardRef={discardRef} jollyRef={jollyRef} pilePopId={pilePopId} closingTopId={closingTopId} />
           <AnimatePresence mode="wait">
             <motion.div
               key={state.current + "-" + state.turnPhase + "-" + (thinkingBot ?? "x")}
@@ -1331,11 +1370,14 @@ export default function Board({
       )}
 
       {/* flying discard: exactly one card travels slot → pile, then hands
-          off to the pile top's pop (mirror of the pickup, reversed) */}
+          off to the pile top's pop (mirror of the pickup, reversed).
+          The closing card flies upside-down and face-down, like a real
+          jolly close. */}
       {discardFlight && discardGhost && (
         <motion.div
           key={`discard-flight-${discardGhost.id}`}
           data-testid="discard-flight"
+          data-closing={discardClosing ? "true" : undefined}
           style={{
             position: "fixed",
             left: 0,
@@ -1350,12 +1392,12 @@ export default function Board({
           initial={{ x: discardFlight.fromX, y: discardFlight.fromY, scale: 1.03, rotate: 0, opacity: 1 }}
           animate={
             discardLanded
-              ? { x: discardFlight.toX, y: discardFlight.toY, scale: 0.62, rotate: -12, opacity: 0 }
+              ? { x: discardFlight.toX, y: discardFlight.toY, scale: 0.62, rotate: discardClosing ? 180 : -12, opacity: 0 }
               : {
                   x: discardFlight.toX,
                   y: [discardFlight.fromY, discardFlight.apex, discardFlight.toY],
                   scale: [1.03, 1, 0.62],
-                  rotate: [0, 3, -12],
+                  rotate: discardClosing ? [0, 90, 180] : [0, 3, -12],
                   opacity: [1, 1, 1],
                 }
           }
@@ -1369,15 +1411,20 @@ export default function Board({
             else {
               setDiscardFlight(null);
               setDiscardGhost(null);
+              setDiscardClosing(false);
             }
           }}
         >
+          {discardClosing ? (
+            <div className="card-back rounded-lg" style={{ width: "100%", height: "100%" }} />
+          ) : (
           <PlayingCard
             card={discardGhost}
             size="lg"
             noAnim
             style={{ width: "100%" }}
           />
+          )}
         </motion.div>
       )}
 
@@ -1429,11 +1476,13 @@ export default function Board({
       )}
 
       {/* bot discard: opponent chip → pile, then hands off to the pile
-          top's pop (mirror of the bot pickup, reversed) */}
+          top's pop (mirror of the bot pickup, reversed).
+          The closing card flies upside-down and face-down. */}
       {botDiscardFlight && botDiscardGhost && (
         <motion.div
           key={`bot-discard-flight-${botDiscardGhost.id}`}
           data-testid="bot-discard-flight"
+          data-closing={botDiscardClosing ? "true" : undefined}
           style={{
             position: "fixed",
             left: 0,
@@ -1448,12 +1497,12 @@ export default function Board({
           initial={{ x: botDiscardFlight.fromX, y: botDiscardFlight.fromY, scale: 1.03, rotate: 0, opacity: 1 }}
           animate={
             botDiscardLanded
-              ? { x: botDiscardFlight.toX, y: botDiscardFlight.toY, scale: 0.62, rotate: -12, opacity: 0 }
+              ? { x: botDiscardFlight.toX, y: botDiscardFlight.toY, scale: 0.62, rotate: botDiscardClosing ? 180 : -12, opacity: 0 }
               : {
                   x: botDiscardFlight.toX,
                   y: [botDiscardFlight.fromY, botDiscardFlight.apex, botDiscardFlight.toY],
                   scale: [1.03, 1, 0.62],
-                  rotate: [0, 3, -12],
+                  rotate: botDiscardClosing ? [0, 90, 180] : [0, 3, -12],
                   opacity: [1, 1, 1],
                 }
           }
@@ -1467,15 +1516,20 @@ export default function Board({
             else {
               setBotDiscardFlight(null);
               setBotDiscardGhost(null);
+              setBotDiscardClosing(false);
             }
           }}
         >
+          {botDiscardClosing ? (
+            <div className="card-back rounded-lg" style={{ width: "100%", height: "100%" }} />
+          ) : (
           <PlayingCard
             card={botDiscardGhost}
             size="md"
             noAnim
             style={{ width: "100%" }}
           />
+          )}
         </motion.div>
       )}
     </div>
