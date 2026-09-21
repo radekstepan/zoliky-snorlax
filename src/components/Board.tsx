@@ -14,6 +14,13 @@ export interface DrawFlightInfo {
   from: "stock" | "discard" | "jolly";
 }
 
+/** A human discard awaiting its fly-to-pile animation (fly-then-commit:
+    the engine discard runs only after the ghost lands on the pile). */
+export interface DiscardFlightInfo {
+  cardId: number;
+  card: Card;
+}
+
 interface BoardProps {
   state: GameState;
   animKey: number;
@@ -36,6 +43,8 @@ interface BoardProps {
   lastDraw?: DrawFlightInfo | null;
   onDrawFlightDone?: () => void;
   onDrawBusyChange?: (busy: boolean) => void;
+  lastDiscard?: DiscardFlightInfo | null;
+  onDiscardFlightDone?: () => void;
 }
 
 const hueColor = (hue: number, l = 60) => `hsl(${hue} 80% ${l}%)`;
@@ -186,6 +195,7 @@ function Piles({
   stockRef,
   discardRef,
   jollyRef,
+  pilePopId,
 }: {
   state: GameState;
   humanTurn: boolean;
@@ -196,6 +206,7 @@ function Piles({
   stockRef: React.RefObject<HTMLButtonElement | null>;
   discardRef: React.RefObject<HTMLButtonElement | null>;
   jollyRef: React.RefObject<HTMLDivElement | null>;
+  pilePopId?: number | null;
 }) {
   const canDraw = humanTurn && state.turnPhase === "draw" && !state.skipDraw && state.phase === "play";
   const top = state.discard[state.discard.length - 1];
@@ -278,8 +289,17 @@ function Piles({
           whileTap={canDraw && state.discard.length > 0 ? { scale: 0.95 } : undefined}
         >
           {top ? (
-            <div style={{ filter: canDraw ? "drop-shadow(0 0 14px rgba(255,211,25,0.45))" : undefined }}>
-              <PlayingCard card={top} size="md" prefix={prefix} noAnim />
+            <div
+              key={top.id}
+              style={{ filter: canDraw ? "drop-shadow(0 0 14px rgba(255,211,25,0.45))" : undefined }}
+            >
+              <PlayingCard
+                card={top}
+                size="md"
+                prefix={prefix}
+                noAnim
+                className={top.id === pilePopId ? "card-discard-pop card-discard-glow" : ""}
+              />
             </div>
           ) : (
             <div
@@ -329,6 +349,8 @@ export default function Board({
   lastDraw,
   onDrawFlightDone,
   onDrawBusyChange,
+  lastDiscard,
+  onDiscardFlightDone,
 }: BoardProps) {
   const human = state.players[0];
   const humanTurn = state.current === 0 && state.phase === "play";
@@ -386,7 +408,39 @@ export default function Board({
   const displayedHand = concealed
     ? human.hand.filter((c) => c.id !== lastDraw!.cardId)
     : human.hand;
-  const hushHand = concealed && !landed;
+  const hushDraw = concealed && !landed;
+
+  /* ---- discard-flight: hold gap → fly → commit. Mirror of the pickup:
+     the card stays in state while its ghost travels slot → pile, and the
+     engine discard runs only after it lands. ---- */
+  interface DiscardGeom {
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+    w: number;
+    h: number;
+    apex: number;
+  }
+  const [discardFlight, setDiscardFlight] = useState<DiscardGeom | null>(null);
+  const [discardLanded, setDiscardLanded] = useState(false);
+  const discardTimer = useRef(0);
+  // Pile-top pop key: survives the parent clearing lastDiscard on commit.
+  const [pilePopId, setPilePopId] = useState<number | null>(null);
+  // Ghost snapshot: survives the parent clearing lastDiscard on commit so
+  // the fade-out can finish.
+  const [discardGhost, setDiscardGhost] = useState<Card | null>(null);
+  useEffect(() => {
+    if (pilePopId === null) return;
+    const t = window.setTimeout(() => setPilePopId(null), 500);
+    return () => window.clearTimeout(t);
+  }, [pilePopId]);
+  // Source slot rect captured on ODHODIT click (before the hand re-renders),
+  // since the slot unmounts once the ghost is in the air.
+  const discardFromRef = useRef<DOMRect | null>(null);
+  const discarding = !!lastDiscard && !isNewRound;
+  const hushDiscard = discarding && !discardLanded;
+  const hushHand = hushDraw || hushDiscard;
 
   useEffect(() => {
     onDrawBusyChange?.(hushHand);
@@ -496,6 +550,7 @@ export default function Board({
   useEffect(
     () => () => {
       window.clearTimeout(landTimer.current);
+      window.clearTimeout(discardTimer.current);
     },
     []
   );
@@ -517,6 +572,107 @@ export default function Board({
       setFlight(null);
       onDrawFlightDone?.();
     }, 360);
+  };
+
+  /* ---- discard-flight effects (mirror of draw-flight, reversed) ---- */
+  useEffect(() => {
+    if (!lastDiscard || isNewRound) {
+      if (!lastDiscard && !discardLanded) {
+        setDiscardFlight(null);
+        setDiscardGhost(null);
+        setDiscardLanded(false);
+        discardFromRef.current = null;
+      }
+      if (!lastDiscard) discardFromRef.current = null;
+      return;
+    }
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      onDiscardFlightDone?.();
+      return;
+    }
+    let cancelled = false;
+    setDiscardLanded(false);
+    // Two rAFs so the held-gap hand has laid out before measuring the pile.
+    const raf = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        const dst = discardRef.current;
+        const srcRect = discardFromRef.current;
+        if (!dst || !srcRect) {
+          onDiscardFlightDone?.();
+          return;
+        }
+        const d = dst.getBoundingClientRect();
+        const w = srcRect.width;
+        const h = srcRect.height;
+        if (w === 0 || h === 0) {
+          onDiscardFlightDone?.();
+          return;
+        }
+        const fromX = srcRect.left;
+        const fromY = srcRect.top;
+        const toX = d.left + d.width / 2 - w / 2;
+        const toY = d.top + d.height / 2 - h / 2;
+        setDiscardGhost(lastDiscard.card);
+        setDiscardFlight({
+          fromX,
+          fromY,
+          toX,
+          toY,
+          w,
+          h,
+          apex: Math.min(fromY, toY) - 84,
+        });
+        sfx.pickTick();
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastDiscard?.cardId, state.round, animKey]);
+
+  // Discard target vanished (round change) mid-flight — bail out cleanly.
+  useEffect(() => {
+    if (lastDiscard && isNewRound) {
+      window.clearTimeout(discardTimer.current);
+      setDiscardFlight(null);
+      setDiscardGhost(null);
+      setDiscardLanded(false);
+      discardFromRef.current = null;
+      onDiscardFlightDone?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastDiscard?.cardId, state.round]);
+
+  const beginDiscardLanding = () => {
+    if (discardLanded) return;
+    setDiscardLanded(true);
+    // Remember which pile top should pop: the parent clears lastDiscard
+    // on commit, so the pop key must survive locally.
+    if (lastDiscard) setPilePopId(lastDiscard.cardId);
+    // Commit the engine discard now: the pile top appears with its pop
+    // while the ghost fades (mirrors the pickup handoff). The discard
+    // thock itself plays from the commit's game events.
+    onDiscardFlightDone?.();
+    window.clearTimeout(discardTimer.current);
+    discardTimer.current = window.setTimeout(() => {
+      setDiscardFlight(null);
+      setDiscardGhost(null);
+    }, 320);
+  };
+
+  const handleDiscardClick = () => {
+    // Capture the source slot geometry before the parent re-renders —
+    // the slot unmounts once the ghost is airborne.
+    if (selected.length === 1) {
+      const el = slotRefs.current.get(selected[0]);
+      discardFromRef.current = el?.getBoundingClientRect() ?? null;
+    } else {
+      discardFromRef.current = null;
+    }
+    onDiscard();
   };
 
   const canJolly = useMemo(() => {
@@ -601,7 +757,7 @@ export default function Board({
       {/* center: piles + status + log + table melds */}
       <div className="flex-1 min-h-0 px-3 sm:px-5 py-2 flex flex-col lg:flex-row gap-3">
         <div className="flex lg:flex-col items-center justify-center gap-3 lg:gap-2 lg:w-72 shrink-0">
-          <Piles state={state} humanTurn={humanTurn} prefix={prefix} onDraw={onDraw} onTakeJolly={onTakeJolly} canJolly={canJolly} stockRef={stockRef} discardRef={discardRef} jollyRef={jollyRef} />
+          <Piles state={state} humanTurn={humanTurn} prefix={prefix} onDraw={onDraw} onTakeJolly={onTakeJolly} canJolly={canJolly} stockRef={stockRef} discardRef={discardRef} jollyRef={jollyRef} pilePopId={pilePopId} />
           <AnimatePresence mode="wait">
             <motion.div
               key={state.current + "-" + state.turnPhase + "-" + (thinkingBot ?? "x")}
@@ -709,7 +865,7 @@ export default function Board({
                 type="button"
                 data-testid="btn-hint"
                 onClick={onHint}
-                disabled={!humanTurn || state.turnPhase !== "action"}
+                disabled={!humanTurn || state.turnPhase !== "action" || hushHand}
                 className="btn-arcade btn-blue px-2.5 py-2 text-[8px]"
               >
                 RADCE
@@ -729,7 +885,7 @@ export default function Board({
                 type="button"
                 data-testid="btn-lay"
                 onClick={onLay}
-                disabled={!humanTurn || state.turnPhase !== "action" || selected.length < 3}
+                disabled={!humanTurn || state.turnPhase !== "action" || selected.length < 3 || hushHand}
                 className="btn-arcade btn-green px-2.5 py-2 text-[8px]"
               >
                 VYLOŽIT{selected.length > 0 ? ` (${selected.length})` : ""}
@@ -737,8 +893,8 @@ export default function Board({
               <button
                 type="button"
                 data-testid="btn-discard"
-                onClick={onDiscard}
-                disabled={!humanTurn || state.turnPhase !== "action" || selected.length !== 1}
+                onClick={handleDiscardClick}
+                disabled={!humanTurn || state.turnPhase !== "action" || selected.length !== 1 || hushHand}
                 className="btn-arcade btn-primary px-2.5 py-2 text-[8px]"
               >
                 ODHODIT
@@ -765,6 +921,29 @@ export default function Board({
                 // pop + glow (fill backwards, no persistence) sells the
                 // arrival while framer keeps full control afterwards.
                 const justLanded = landed && lastDraw?.cardId === c.id;
+                // Discarding card: hold its gap with an invisible placeholder
+                // so siblings don't jump while the ghost is in the air.
+                const isDiscarding =
+                  discarding && lastDiscard?.cardId === c.id && !discardLanded;
+                if (isDiscarding) {
+                  return (
+                    <Reorder.Item
+                      as="div"
+                      key={c.id}
+                      value={c}
+                      layout
+                      transition={{ type: "spring", stiffness: 320, damping: 30 }}
+                      className="relative shrink-0"
+                      style={{ zIndex: i, opacity: 0, pointerEvents: "none" }}
+                      title=""
+                    >
+                      <div
+                        aria-hidden
+                        style={{ width: CARD_SIZES.lg.w, aspectRatio: "5 / 7" }}
+                      />
+                    </Reorder.Item>
+                  );
+                }
                 return (
                   <Reorder.Item
                     as="div"
@@ -909,6 +1088,57 @@ export default function Board({
               style={{ width: "100%" }}
             />
           )}
+        </motion.div>
+      )}
+
+      {/* flying discard: exactly one card travels slot → pile, then hands
+          off to the pile top's pop (mirror of the pickup, reversed) */}
+      {discardFlight && discardGhost && (
+        <motion.div
+          key={`discard-flight-${discardGhost.id}`}
+          data-testid="discard-flight"
+          style={{
+            position: "fixed",
+            left: 0,
+            top: 0,
+            width: discardFlight.w,
+            height: discardFlight.h,
+            zIndex: 80,
+            pointerEvents: "none",
+            perspective: 800,
+            filter: "drop-shadow(0 12px 24px rgba(0,0,0,0.55))",
+          }}
+          initial={{ x: discardFlight.fromX, y: discardFlight.fromY, scale: 1.03, rotate: 0, opacity: 1 }}
+          animate={
+            discardLanded
+              ? { x: discardFlight.toX, y: discardFlight.toY, scale: 0.62, rotate: -12, opacity: 0 }
+              : {
+                  x: discardFlight.toX,
+                  y: [discardFlight.fromY, discardFlight.apex, discardFlight.toY],
+                  scale: [1.03, 1, 0.62],
+                  rotate: [0, 3, -12],
+                  opacity: [1, 1, 1],
+                }
+          }
+          transition={
+            discardLanded
+              ? { duration: 0.12, ease: "easeOut" }
+              : { duration: 0.6, ease: [0.22, 0.9, 0.3, 1] }
+          }
+          onAnimationComplete={() => {
+            if (!discardLanded) beginDiscardLanding();
+            else {
+              setDiscardFlight(null);
+              setDiscardGhost(null);
+            }
+          }}
+        >
+          <PlayingCard
+            card={discardGhost}
+            size="lg"
+            noAnim
+            style={{ width: "100%" }}
+          />
         </motion.div>
       )}
     </div>

@@ -242,6 +242,21 @@ body,
 }
 .hand-breathe { animation: hand-breathe 0.32s ease-out backwards; }
 
+/* discard landing: single-shot pop + gold glow on the pile top. Mirrors
+   the pickup land-pop/land-glow, tinted gold for the discard pile. */
+@keyframes discard-pop {
+  0% { transform: scale(0.6) translateY(-10px); opacity: 0.4; }
+  55% { transform: scale(1.08) translateY(2px); opacity: 1; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+.card-discard-pop { animation: discard-pop 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.15) backwards; }
+
+@keyframes discard-glow {
+  0% { box-shadow: 0 0 0 0 rgba(255, 211, 25, 0.75), 0 0 22px rgba(255, 211, 25, 0.6); }
+  100% { box-shadow: 0 0 0 18px rgba(255, 211, 25, 0), 0 0 0 rgba(255, 211, 25, 0); }
+}
+.card-discard-glow { animation: discard-glow 0.45s ease-out backwards; }
+
 /* ---------- scrollbars ---------- */
 .pixel-scroll::-webkit-scrollbar { height: 8px; width: 8px; }
 .pixel-scroll::-webkit-scrollbar-track { background: rgba(20, 14, 48, 0.6); border-radius: 8px; }

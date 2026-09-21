@@ -21,7 +21,7 @@ import { RULES } from "./game/core";
 import { planBotTurn, BotAction } from "./game/bot";
 import { sfx } from "./game/sounds";
 import { bodyCount } from "./utils/czech";
-import Board, { DrawFlightInfo } from "./components/Board";
+import Board, { DrawFlightInfo, DiscardFlightInfo } from "./components/Board";
 import {
   StartScreen,
   StartConfig,
@@ -47,6 +47,8 @@ export default function App() {
     target: 300,
   });
   const [game, setGame] = useState<GameState | null>(null);
+  const gameRef = useRef(game);
+  gameRef.current = game;
   const [selected, setSelected] = useState<number[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [showRules, setShowRules] = useState(false);
@@ -60,6 +62,11 @@ export default function App() {
   // Tracks the most recent human pickup so Board can fly the card from
   // the pile to its slot before revealing it in the hand.
   const [lastDraw, setLastDraw] = useState<DrawFlightInfo | null>(null);
+  // Tracks a pending human discard so Board can fly the card from its slot
+  // to the pile before the engine discard commits (fly-then-commit).
+  const [lastDiscard, setLastDiscard] = useState<DiscardFlightInfo | null>(null);
+  const lastDiscardRef = useRef(lastDiscard);
+  lastDiscardRef.current = lastDiscard;
   // True while a pickup flight is in the air — human hand input hushes.
   const [drawBusy, setDrawBusy] = useState(false);
   // Sort toggle: while on, every new card in the human hand slots into
@@ -310,6 +317,7 @@ export default function App() {
       setGame(fresh);
       setSelected([]);
       setLastDraw(null);
+      setLastDiscard(null);
       setDrawBusy(false);
       setShowRules(false);
       setShowPause(false);
@@ -332,6 +340,7 @@ export default function App() {
     setGame(null);
     setSelected([]);
     setLastDraw(null);
+    setLastDiscard(null);
     setDrawBusy(false);
     setShowPause(false);
     setShowRoundEnd(false);
@@ -349,6 +358,7 @@ export default function App() {
     setShowGameEnd(false);
     setSelected([]);
     setLastDraw(null);
+    setLastDiscard(null);
     const fresh = createGame(config);
     if (autoSortRef.current) fresh.players[0].hand = sortCards(fresh.players[0].hand);
     setGame(fresh);
@@ -363,6 +373,7 @@ export default function App() {
     setGame(res.state);
     setSelected([]);
     setLastDraw(null);
+    setLastDiscard(null);
     setShowRoundEnd(false);
     setGameSeq((s) => s + 1);
     sfx.click();
@@ -375,6 +386,7 @@ export default function App() {
 
   const toggleCard = (id: number) => {
     if (!humanTurn) return;
+    if (drawBusy || lastDiscardRef.current) return;
     setSelected((s) => {
       const has = s.includes(id);
       if (!has) sfx.select();
@@ -384,6 +396,7 @@ export default function App() {
 
   const doDraw = (from: "stock" | "discard") => {
     if (!game || !humanTurn) return;
+    if (drawBusy || lastDiscardRef.current) return;
     const res = draw(game, from);
     if (!res.events.some((e) => e.type === "invalid")) {
       setSelected([]);
@@ -401,19 +414,42 @@ export default function App() {
 
   const doLay = () => {
     if (!game || !humanTurn) return;
+    if (drawBusy || lastDiscardRef.current) return;
     const res = layMeld(game, selected);
     if (!res.events.some((e) => e.type === "invalid")) {
       setSelected([]);
       setLastDraw(null);
+      setLastDiscard(null);
       setDrawBusy(false);
       setGame(res.state);
     }
     handleEvents(res.events);
   };
 
+  /** Begin a human discard: stage the flight; the engine commit runs on landing. */
   const doDiscard = () => {
     if (!game || !humanTurn || selected.length !== 1) return;
-    const res = discard(game, selected[0]);
+    if (drawBusy || lastDiscardRef.current) return;
+    const card = game.players[0].hand.find((c) => c.id === selected[0]);
+    if (!card) return;
+    setSelected([]);
+    setLastDraw(null);
+    setLastDiscard({ cardId: card.id, card });
+  };
+
+  /** Commit a staged human discard once its ghost lands on the pile. */
+  const commitDiscard = useCallback(() => {
+    const pending = lastDiscardRef.current;
+    const st = gameRef.current;
+    if (!pending || !st) return;
+    if (st.phase !== "play" || st.current !== 0 || st.turnPhase !== "action") {
+      setLastDiscard(null);
+      return;
+    }
+    const res = discard(st, pending.cardId);
+    // Clear the pending flight either way; the pile pop + ghost fade are
+    // driven locally in Board. The discard thock plays from game events.
+    setLastDiscard(null);
     if (!res.events.some((e) => e.type === "invalid")) {
       setSelected([]);
       setLastDraw(null);
@@ -421,11 +457,12 @@ export default function App() {
       setGame(res.state);
     }
     handleEvents(res.events);
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handleEvents]);
 
   const doSort = () => {
     if (!game || game.current !== 0 || game.phase !== "play") return;
-    if (drawBusy) return;
+    if (drawBusy || lastDiscardRef.current) return;
     if (autoSortRef.current) {
       // Toggle off — keep the current order.
       setAutoSort(false);
@@ -441,12 +478,13 @@ export default function App() {
 
   const doReorderHand = (orderedIds: number[]) => {
     if (!game || game.current !== 0 || game.phase !== "play") return;
-    if (drawBusy) return;
+    if (drawBusy || lastDiscardRef.current) return;
     const res = reorderHand(game, orderedIds);
     if (res.state !== game) {
       // A manual order wins over the toggle.
       if (autoSortRef.current) setAutoSort(false);
       setLastDraw(null);
+      setLastDiscard(null);
       setDrawBusy(false);
       setGame(res.state);
     }
@@ -454,6 +492,7 @@ export default function App() {
 
   const doTakeJolly = () => {
     if (!game || !humanTurn) return;
+    if (drawBusy || lastDiscardRef.current) return;
     const res = takeJolly(game);
     if (!res.events.some((e) => e.type === "invalid")) {
       setSelected([]);
@@ -469,7 +508,7 @@ export default function App() {
 
   const doHint = () => {
     if (!game || !humanTurn || game.turnPhase !== "action") return;
-    if (drawBusy) return;
+    if (drawBusy || lastDiscardRef.current) return;
     const me = game.players[0];
     // Jolly rush: lay everything but one card, then discard the last one.
     if (game.jollyRush) {
@@ -520,6 +559,7 @@ export default function App() {
 
   const doMeldClick = (meld: Meld, jokerCardId?: number) => {
     if (!game || !humanTurn || selected.length !== 1) return;
+    if (drawBusy || lastDiscardRef.current) return;
     const cardId = selected[0];
     const card = game.players[0].hand.find((c) => c.id === cardId);
     if (!card) return;
@@ -579,6 +619,8 @@ export default function App() {
           lastDraw={lastDraw}
           onDrawFlightDone={() => setLastDraw(null)}
           onDrawBusyChange={setDrawBusy}
+          lastDiscard={lastDiscard}
+          onDiscardFlightDone={commitDiscard}
           onOpenMenu={() => {
             paused.current = true;
             setShowPause(true);
