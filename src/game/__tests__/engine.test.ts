@@ -434,9 +434,24 @@ describe("closing, scoring and next round", () => {
     expect(r.state.phase).toBe("roundEnd");
     expect(r.state.roundEndInfo?.closedBy).toBe(me);
     expect(r.state.players[me].roundDelta).toBe(0);
-    // the joker is stashed for next round, not penalized
-    expect(r.state.players[other].roundDelta).toBe(-2);
-    expect(r.state.players[other].stash).toHaveLength(1);
+    // jokers count like any other card: 2 normal + 1 joker = -3
+    expect(r.state.players[other].roundDelta).toBe(-3);
+  });
+
+  it("a joker left in hand counts -1 like any other card (12 cards = -12)", () => {
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    const me = s.current;
+    const other = (me + 1) % 2;
+    s.players[me].hand = [c(2, "c")];
+    s.players[other].hand = [
+      c(3, "d"), c(4, "s"), c(5, "h"), c(6, "d"),
+      c(7, "s"), c(8, "h"), c(9, "d"), c(10, "s"),
+      c(11, "h"), c(12, "d"), c(13, "s"), joker(),
+    ];
+    s.turnPhase = "action";
+    const r = discard(s, s.players[me].hand[0].id);
+    expect(r.state.phase).toBe("roundEnd");
+    expect(r.state.players[other].roundDelta).toBe(-12);
   });
 
   it("a Jolly Hand lays the whole hand and doubles everyone else", () => {
@@ -535,21 +550,13 @@ describe("closing, scoring and next round", () => {
     expect(round.state.round).toBe(2);
   });
 
-  it("nextRound rejoins stashed jokers with fresh ids (no deck collision)", () => {
-    // Stashed jokers keep last round's ids, which the freshly built deck
-    // reuses — rejoining must re-assign ids above the deck range, or two
-    // physical cards would share an id and id-based removal would drop both.
-    let s = createGame({ playerCount: 2, difficulty: "easy", target: 300 });
-    s.phase = "roundEnd";
-    s.players[0].stash = [{ id: 5, suit: "s", rank: JOKER_RANK, joker: true }];
-    const r = nextRound(s);
-    expect(invalidOf(r.events)).toHaveLength(0);
-    expect(r.state.players[0].hand.some((x) => x.joker)).toBe(true);
+  it("nextRound deals fresh hands with unique ids", () => {
+    const s = createGame({ playerCount: 2, difficulty: "easy", target: 300 });
     const ids = [
-      ...r.state.deck.map((x) => x.id),
-      ...r.state.discard.map((x) => x.id),
-      ...r.state.players.flatMap((p) => p.hand.map((x) => x.id)),
-      ...(r.state.jollyCard ? [r.state.jollyCard.id] : []),
+      ...s.deck.map((x) => x.id),
+      ...s.discard.map((x) => x.id),
+      ...s.players.flatMap((p) => p.hand.map((x) => x.id)),
+      ...(s.jollyCard ? [s.jollyCard.id] : []),
     ];
     expect(new Set(ids).size).toBe(ids.length);
   });

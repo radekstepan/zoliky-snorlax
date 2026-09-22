@@ -35,8 +35,6 @@ export interface PlayerState {
   isBot: boolean;
   difficulty?: Difficulty;
   hand: Card[];
-  /** Jokers kept from the previous round — rejoin the next deal, no penalty. */
-  stash: Card[];
   melded: boolean;
   score: number;
   roundDelta: number;
@@ -126,7 +124,6 @@ export function createGame(config: GameConfig): GameState {
       name: "Ty",
       isBot: false,
       hand: [],
-      stash: [],
       melded: false,
       score: 0,
       roundDelta: 0,
@@ -141,7 +138,6 @@ export function createGame(config: GameConfig): GameState {
       isBot: true,
       difficulty: config.difficulty,
       hand: [],
-      stash: [],
       melded: false,
       score: 0,
       roundDelta: 0,
@@ -220,23 +216,6 @@ function dealRound(state: GameState): void {
     }
   }
   if (keptJoker) state.players[cutter].hand.push(keptJoker);
-  // Jokers kept from the last round rejoin their owner's hand. They still
-  // carry last round's ids, which the freshly built deck reuses — re-assign
-  // ids above the deck range so every card id stays unique (engine logic
-  // removes/selects cards by id and would drop all copies at once).
-  let freshId =
-    Math.max(
-      ...state.deck.map((c) => c.id),
-      ...state.players.flatMap((p) => p.hand.map((c) => c.id)),
-      state.jollyCard?.id ?? -1
-    ) + 1;
-  for (const p of state.players) {
-    if (p.stash.length > 0) {
-      for (const jc of p.stash) jc.id = freshId++;
-      p.hand.push(...p.stash);
-      p.stash = [];
-    }
-  }
   const predak = (state.dealer + 1) % n;
   state.players[predak].hand.push(state.deck.pop()!); // 13th card
   state.current = predak;
@@ -681,15 +660,13 @@ function endRound(
 ): ActionResult {
   const deltas: RoundEndInfo["deltas"] = [];
   for (const p of s.players) {
-    // Jokers in hand are kept for the next round — no penalty.
-    const rest = p.hand.filter((c) => !c.joker);
-    p.stash.push(...p.hand.filter((c) => c.joker));
-    // -1 game point per card left in hand (-2 after a Jolly Hand).
+    // -1 game point per card left in hand (-2 after a Jolly Hand),
+    // jokers included — just a card like any other.
     // The closer laid everything down, so they count nothing.
-    const points = (jolly ? -2 : -1) * rest.length;
+    const points = (jolly ? -2 : -1) * p.hand.length;
     p.roundDelta = points;
     p.score += points;
-    deltas.push({ id: p.id, points, doubled: jolly && rest.length > 0 });
+    deltas.push({ id: p.id, points, doubled: jolly && p.hand.length > 0 });
   }
   if (closedBy >= 0) {
     s.players[closedBy].closedRounds++;
