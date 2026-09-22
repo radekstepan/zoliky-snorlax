@@ -85,6 +85,134 @@ describe("planBotTurn", () => {
     if (!closed) expect(next.current).toBe(0);
     void next;
   });
+
+  it("mid-turn replan (after a draw) never emits another draw", () => {
+    // Regression: the App re-plans from the live state after any stale
+    // action. A replan from turnPhase==="action" must not start with a
+    // draw — engine.draw would reject it with "Už jsi táhl(a)." and the
+    // bot chain would spin forever (frozen "si bere z hromádky…" status).
+    for (let i = 0; i < 20; i++) {
+      let s = createGame({ playerCount: 4, difficulty: "medium", target: 300 });
+      s.current = 1;
+      s.turnCount = RULES.MELD_WAIT_ROUNDS * s.players.length;
+      s.skipDraw = false;
+      s.turnPhase = "draw";
+      const d = draw(s, "stock");
+      expect(d.events.map((e) => e.type)).not.toContain("invalid");
+      s = d.state;
+      const replan = planBotTurn(s);
+      expect(
+        replan.filter((a) => a.kind === "draw" || a.kind === "jolly")
+      ).toHaveLength(0);
+      const { types } = runPlan(s);
+      expect(types).not.toContain("invalid");
+    }
+  });
+
+  it("replan from a předák (skipDraw) state never emits a draw", () => {
+    const s = createGame({ playerCount: 2, difficulty: "medium", target: 300 });
+    s.current = 1;
+    s.turnPhase = "action";
+    s.skipDraw = true;
+    const plan = planBotTurn(s);
+    expect(
+      plan.filter((a) => a.kind === "draw" || a.kind === "jolly")
+    ).toHaveLength(0);
+  });
+
+  it("replanned turns after pile takes always complete legally", () => {
+    // Mirrors the App: apply the planned draw, then replan the rest of the
+    // turn from the live state (stale-plan recovery). Every turn — pile
+    // takes included — must finish with a discard or a close, never with
+    // an illegal action (previously: "Už jsi táhl(a)." loops and turns
+    // stuck on "musí ji hned vyložit").
+    let pileTakes = 0;
+    const problems: string[] = [];
+    for (let g = 0; g < 2 && problems.length === 0; g++) {
+      let s = createGame({ playerCount: 4, difficulty: "medium", target: 300 });
+      let steps = 0;
+      while (steps++ < 400 && problems.length === 0) {
+        if (s.phase === "roundEnd") break; // single-round sample is enough
+        if (s.phase !== "play") break;
+        const me = s.players[s.current];
+        if (!me.isBot) {
+          // naive human: stock draw, lay what packs, dump priciest card
+          if (s.skipDraw) {
+            const card = me.hand.reduce((a, b) =>
+              penaltyValue(a) >= penaltyValue(b) ? a : b
+            );
+            s = discard(s, card.id).state;
+            continue;
+          }
+          if (s.turnPhase === "draw") s = draw(s, "stock").state;
+          if (s.phase === "play" && s.current === me.id) {
+            const h = s.players[s.current].hand;
+            const packing = s.players[s.current].melded
+              ? bestPacking(h, false, 0)
+              : findFirstMeld(h);
+            if (packing && packing.melds.length > 0) {
+              s = layMeld(s, packing.melds.flatMap((m) => m.cards.map((x) => x.id))).state;
+            }
+          }
+          if (s.phase !== "play" || s.current !== me.id) continue;
+          const rest = s.players[s.current].hand;
+          if (rest.length === 0) break;
+          const card = rest.reduce((a, b) =>
+            penaltyValue(a) >= penaltyValue(b) ? a : b
+          );
+          s = discard(s, card.id).state;
+          continue;
+        }
+        const owner = s.current;
+        const plan = planBotTurn(s);
+        if (plan.length === 0) {
+          problems.push(`empty plan for player ${owner}`);
+          break;
+        }
+        const first = plan[0];
+        if (first.kind === "jolly") {
+          // atomic in the App: take-meld-discard with no replan between
+          for (const a of plan) {
+            const r = apply(s, a);
+            if (r.events.some((e) => e.type === "invalid")) {
+              problems.push(`jolly plan invalid at ${a.kind}`);
+              break;
+            }
+            s = r.state;
+            if (s.phase !== "play" || s.current !== owner) break;
+          }
+          continue;
+        }
+        const d = apply(s, first);
+        if (d.events.some((e) => e.type === "invalid")) {
+          problems.push(`first action invalid: ${first.kind}`);
+          break;
+        }
+        s = d.state;
+        if (s.phase !== "play" || s.current !== owner) continue;
+        if (first.kind === "draw" && first.from === "discard") pileTakes++;
+        const replan = planBotTurn(s);
+        let i = 0;
+        while (i < replan.length) {
+          if (s.phase !== "play" || s.current !== owner) break;
+          const r = apply(s, replan[i]);
+          if (r.events.some((e) => e.type === "invalid")) {
+            const msg = (r.events.find((e) => e.type === "invalid") as { message?: string })?.message;
+            problems.push(`${msg} [after=${first.kind} at=${replan[i].kind}]`);
+            break;
+          }
+          s = r.state;
+          i++;
+        }
+        if (problems.length === 0 && s.phase === "play" && s.current === owner) {
+          problems.push(`turn did not advance for player ${owner}`);
+          break;
+        }
+      }
+    }
+    expect(pileTakes).toBeGreaterThan(0);
+    expect(problems).toHaveLength(0);
+  }, 60000);
 });
 
 describe("full game simulation (bot plans + naive legal human)", () => {

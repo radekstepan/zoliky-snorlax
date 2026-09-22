@@ -136,8 +136,11 @@ export function planBotTurn(initial: GameState): BotAction[] {
   // and swaps may only target melds that pre-date this plan (stable ids).
   const tableIds = new Set(initial.melds.map((m) => m.id));
 
-  // 1) draw (skipped by the předák, who starts the round with a discard)
-  if (!sim.skipDraw) {
+  // 1) draw (skipped by the předák, who starts the round with a discard).
+  // NOTE: replans run mid-turn from turnPhase==="action" — like the human
+  // UI (canDraw) and engine ("Už jsi táhl(a)."), the planner must only draw
+  // from the draw step, or the bot chain would re-draw forever.
+  if (!sim.skipDraw && sim.turnPhase === "draw") {
     if (shouldTakeJolly(sim)) {
       // Jolly Hand: take the bottom card, lay everything but one card,
       // then discard the last card to close.
@@ -312,6 +315,8 @@ function useMustCard(
           action: { kind: "layoff", cardId: card.id, meldId: m.id },
         };
     }
+    // Jolly Hand plays out as one atomic take-meld-discard; a partial lay
+    // here would break the close, so don't fall through to packings.
     if (!me.melded) return null;
   }
   const idx = me.hand.findIndex((c) => c.id === mustId);

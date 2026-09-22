@@ -18,7 +18,7 @@ import {
 } from "../melds";
 import type { Meld } from "../melds";
 import type { Card } from "../core";
-import { JOKER_RANK, RULES } from "../core";
+import { JOKER_RANK, RULES, buildDeck, shuffle } from "../core";
 
 let id = 1000;
 const c = (rank: number, suit: Card["suit"] = "h"): Card => ({ id: id++, suit, rank });
@@ -274,6 +274,34 @@ describe("subset search", () => {
     expect(coverAll([c(7, "h"), c(8, "h")])).toBeNull();
     expect(coverAll([c(7, "h"), c(8, "h"), c(9, "d")])).toBeNull();
   });
+
+  it("gate-aware coverAll finds the clean cover regardless of card order", () => {
+    // 5-6-7♠ (clean, 18) + 10-11♥+J (≈30): 48 pts with a clean run. With
+    // the joker first, a naive first-found cover has no clean run — the
+    // gate-aware search must still find the clean one, or a legally taken
+    // pile card could never be laid and the turn would get stuck.
+    const ordered = [joker(), c(5, "s"), c(10, "h"), c(7, "s"), c(11, "h"), c(6, "s")];
+    const covered = coverAll(ordered, true, RULES.FIRST_MELD_POINTS);
+    expect(covered).not.toBeNull();
+    expect(firstMeldOk(covered!)).toBe(true);
+  });
+
+  it("gate-aware coverAll agrees with bestPackingIncluding on random hands", () => {
+    // Whenever a must-include packing meets the gate, those same cards as
+    // a layMeld selection must cover with the gate too.
+    for (let iter = 0; iter < 10; iter++) {
+      const hand = shuffle(buildDeck()).slice(0, 13);
+      for (let must = 0; must < hand.length; must++) {
+        const pack = bestPackingIncluding(hand, true, RULES.FIRST_MELD_POINTS, must);
+        if (!pack || pack.melds.length === 0) continue;
+        const ids = pack.melds.flatMap((m) => m.cards.map((x) => x.id));
+        const selected = hand.filter((x) => ids.includes(x.id));
+        const covered = coverAll(selected, true, RULES.FIRST_MELD_POINTS);
+        expect(covered).not.toBeNull();
+        expect(firstMeldOk(covered!)).toBe(true);
+      }
+    }
+  }, 30000);
 
   it("layoffTargets lists only fitting table melds", () => {
     const run = meldOf([c(7, "h"), c(8, "h"), c(9, "h")]);

@@ -205,6 +205,18 @@ describe("layMeld", () => {
     const r = layMeld(s, handIds(s));
     expect(invalidOf(r.events)).toHaveLength(1);
   });
+
+  it("accepts a gate-meeting grouping even when cards admit a non-clean cover", () => {
+    // 5-6-7♠ (clean) + 10-11♥+J: one partition has a clean run, another
+    // has none. layMeld must find the gate-meeting cover — a pile card
+    // taken on this promise must always be layable (bot turns depend on it).
+    let s = unlocked(createGame({ playerCount: 2, difficulty: "easy", target: 300 }));
+    s.players[s.current].hand = [joker(), c(5, "s"), c(10, "h"), c(7, "s"), c(11, "h"), c(6, "s")];
+    s.turnPhase = "action";
+    const r = layMeld(s, handIds(s));
+    expect(invalidOf(r.events)).toHaveLength(0);
+    expect(r.state.players[s.current].melded).toBe(true);
+  });
 });
 
 describe("layoff", () => {
@@ -521,6 +533,25 @@ describe("closing, scoring and next round", () => {
     const round = nextRound(end.state);
     expect(round.state.phase).toBe("play");
     expect(round.state.round).toBe(2);
+  });
+
+  it("nextRound rejoins stashed jokers with fresh ids (no deck collision)", () => {
+    // Stashed jokers keep last round's ids, which the freshly built deck
+    // reuses — rejoining must re-assign ids above the deck range, or two
+    // physical cards would share an id and id-based removal would drop both.
+    let s = createGame({ playerCount: 2, difficulty: "easy", target: 300 });
+    s.phase = "roundEnd";
+    s.players[0].stash = [{ id: 5, suit: "s", rank: JOKER_RANK, joker: true }];
+    const r = nextRound(s);
+    expect(invalidOf(r.events)).toHaveLength(0);
+    expect(r.state.players[0].hand.some((x) => x.joker)).toBe(true);
+    const ids = [
+      ...r.state.deck.map((x) => x.id),
+      ...r.state.discard.map((x) => x.id),
+      ...r.state.players.flatMap((p) => p.hand.map((x) => x.id)),
+      ...(r.state.jollyCard ? [r.state.jollyCard.id] : []),
+    ];
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });
 

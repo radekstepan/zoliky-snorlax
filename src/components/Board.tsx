@@ -502,7 +502,9 @@ export default function Board({
   // since the slot unmounts once the ghost is in the air.
   const discardFromRef = useRef<DOMRect | null>(null);
   const discarding = !!lastDiscard && !isNewRound;
-  const hushDiscard = discarding && !discardLanded;
+  // Stay hushed while the ghost is still fading so a drag can't start
+  // mid-slide and break the close-together layout animation.
+  const hushDiscard = discarding || !!discardFlight;
   const hushHand = hushDraw || hushDiscard;
 
   useEffect(() => {
@@ -1196,17 +1198,26 @@ export default function Board({
             </div>
           </div>
 
-          {/* hand — draggable on the human turn, static otherwise */}
-          {humanTurn && state.phase === "play" ? (
+          {/* hand — always the same Reorder tree so removals (e.g. discard
+              commit, which also flips humanTurn off) slide together via
+              layout instead of remounting into a flash. Drag/click/hover
+              are gated by canInteract. */}
+          {(() => {
+            const canInteract = humanTurn && state.phase === "play";
+            const interactive = canInteract && !hushHand;
+            return (
             <Reorder.Group
               as="div"
               axis="x"
               values={displayedHand}
-              onReorder={(cards) => onReorderHand(cards.map((c) => c.id))}
+              onReorder={(cards) => {
+                if (!canInteract) return;
+                onReorderHand(cards.map((c) => c.id));
+              }}
               ref={(el: unknown) => {
                 handRowRef.current = el as HTMLDivElement | null;
               }}
-              className={`fan-hand flex justify-center mt-3 overflow-x-auto no-scrollbar pt-6 pb-4 px-2${hushHand ? " pointer-events-none" : ""}`}
+              className={`fan-hand flex justify-center mt-3 overflow-x-auto no-scrollbar pt-6 pb-4 px-2${!interactive ? " pointer-events-none" : ""}`}
               data-testid="player-hand"
             >
               {displayedHand.map((c, i) => {
@@ -1216,9 +1227,11 @@ export default function Board({
                 // arrival while framer keeps full control afterwards.
                 const justLanded = landed && lastDraw?.cardId === c.id;
                 // Discarding card: hold its gap with an invisible placeholder
-                // so siblings don't jump while the ghost is in the air.
+                // so siblings don't jump while the ghost is in the air. The
+                // placeholder stays until the engine commit removes the card,
+                // so siblings slide together instead of flashing.
                 const isDiscarding =
-                  discarding && lastDiscard?.cardId === c.id && !discardLanded;
+                  discarding && lastDiscard?.cardId === c.id;
                 if (isDiscarding) {
                   return (
                     <Reorder.Item
@@ -1251,7 +1264,8 @@ export default function Board({
                     transition={{ type: "spring", stiffness: 320, damping: 30 }}
                     className="hand-draggable relative shrink-0"
                     style={{ zIndex: justLanded ? 60 : isSel ? 50 : i }}
-                    whileDrag={{ scale: 1.12, zIndex: 100 }}
+                    dragListener={interactive}
+                    whileDrag={canInteract ? { scale: 1.12, zIndex: 100 } : undefined}
                     onDragStart={() => {
                       dragMoved.current = true;
                     }}
@@ -1260,23 +1274,27 @@ export default function Board({
                         dragMoved.current = false;
                       }, 0);
                     }}
-                    title="Přetáhni pro změnu pořadí"
+                    title={canInteract ? "Přetáhni pro změnu pořadí" : undefined}
                   >
                     <PlayingCard
                       card={c}
                       prefix={prefix}
                       size="lg"
                       selected={isSel}
-                      hoverable
+                      hoverable={canInteract}
                       hoverLift={canHover}
                       lifted={isSel}
                       dealDelay={isNewRound ? Math.min(i * 0.04, 0.6) : 0}
                       noAnim={justLanded}
                       zIndex={justLanded ? 60 : isSel ? 50 : i}
                       className={justLanded ? "card-land-pop card-land-glow" : ""}
-                      onClick={() => {
-                        if (!dragMoved.current) onToggleCard(c.id);
-                      }}
+                      onClick={
+                        canInteract
+                          ? () => {
+                              if (!dragMoved.current) onToggleCard(c.id);
+                            }
+                          : undefined
+                      }
                     />
                   </Reorder.Item>
                 );
@@ -1285,39 +1303,8 @@ export default function Board({
                 <span className="font-pixel text-[8px] opacity-40 py-6">Ruka je prázdná…</span>
               )}
             </Reorder.Group>
-          ) : (
-            <div className="fan-hand flex justify-center mt-3 overflow-x-auto no-scrollbar pt-6 pb-4 px-2" data-testid="player-hand">
-              {human.hand.map((c, i) => {
-                const isSel = selected.includes(c.id);
-                return (
-                  <div
-                    key={c.id}
-                    ref={(el) => {
-                      if (el) slotRefs.current.set(c.id, el);
-                      else slotRefs.current.delete(c.id);
-                    }}
-                    className="relative shrink-0"
-                  >
-                  <PlayingCard
-                    key={c.id}
-                    card={c}
-                    prefix={prefix}
-                    size="lg"
-                    selected={isSel}
-                    hoverable={false}
-                    hoverLift={canHover}
-                    lifted={isSel}
-                    dealDelay={isNewRound ? Math.min(i * 0.04, 0.6) : 0}
-                    zIndex={isSel ? 50 : i}
-                  />
-                  </div>
-                );
-              })}
-              {human.hand.length === 0 && (
-                <span className="font-pixel text-[8px] opacity-40 py-6">Ruka je prázdná…</span>
-              )}
-            </div>
-          )}
+            );
+          })()}
         </div>
       </div>
 

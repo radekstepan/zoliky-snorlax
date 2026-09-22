@@ -484,39 +484,79 @@ export function bestPackingIncluding(
 /**
  * Partition ALL given cards into valid melds (every card must be used).
  * Returns the melds or null if full coverage is impossible.
+ *
+ * When requireClean/minPoints are given (first meld: 36 points + a clean
+ * run), only a full cover meeting the gate is returned. This must agree
+ * with bestPackingIncluding (used by the pile-take legality check and the
+ * bot planner): whenever a gate-meeting packing exists, the full cover
+ * found here also meets it — otherwise a taken card could never be laid
+ * and the turn would get stuck.
  */
-export function coverAll(cards: Card[]): Meld[] | null {
+export function coverAll(
+  cards: Card[],
+  requireClean = false,
+  minPoints = 0
+): Meld[] | null {
   if (cards.length < RULES.SET_MIN) return null;
   const cands = findAllMelds(cards);
   const n = cards.length;
   const full = (1 << n) - 1;
-  const parent = new Int32Array(1 << n).fill(-1);
-  const pickMask = new Int32Array(1 << n).fill(0);
-  const reachable = new Uint8Array(1 << n);
-  reachable[0] = 1;
+  // Max-points DP over masks. A separate clean track guarantees that a
+  // higher-scoring cover without a clean run never shadows a gate-meeting
+  // one (bestPackingIncluding may have found exactly that cover).
+  const size = 1 << n;
+  const dpAll = new Int16Array(size).fill(-1);
+  const parentAll = new Int32Array(size).fill(-1);
+  const pickAll = new Int32Array(size).fill(0);
+  const dpClean = new Int16Array(size).fill(-1);
+  const parentClean = new Int32Array(size).fill(-1);
+  const pickClean = new Int32Array(size).fill(0);
+  // Track the prefix came from: a clean candidate bridges from ANY path,
+  // so a clean chain's prefix may live on the all-track (0) or clean-track.
+  const prevTrack = new Int8Array(size).fill(0);
+  dpAll[0] = 0;
   for (let mask = 0; mask <= full; mask++) {
-    if (!reachable[mask]) continue;
     for (const cand of cands) {
       if (mask & cand.mask) continue;
       const next = mask | cand.mask;
-      if (!reachable[next]) {
-        reachable[next] = 1;
-        parent[next] = mask;
-        pickMask[next] = cand.mask;
+      if (dpAll[mask] >= 0) {
+        const pts = dpAll[mask] + cand.points;
+        if (pts > dpAll[next]) {
+          dpAll[next] = pts;
+          parentAll[next] = mask;
+          pickAll[next] = cand.mask;
+        }
+      }
+      const base = cand.clean ? dpAll[mask] : dpClean[mask];
+      if (base >= 0) {
+        const pts = base + cand.points;
+        if (pts > dpClean[next]) {
+          dpClean[next] = pts;
+          parentClean[next] = mask;
+          pickClean[next] = cand.mask;
+          prevTrack[next] = cand.clean ? 0 : 1;
+        }
       }
     }
   }
-  if (!reachable[full]) return null;
+  if (requireClean && dpClean[full] < minPoints) return null;
+  if (!requireClean && dpAll[full] < minPoints) return null;
+  // Reconstruct backwards. A clean chain's prefix may live on either track
+  // (a clean candidate bridges from any path) — follow prevTrack.
   const melds: Meld[] = [];
   let cur = full;
+  let track = requireClean ? 1 : 0; // 1 = clean-track prefix, 0 = all-track
   while (cur > 0) {
-    const pm = pickMask[cur];
+    const pm = track ? pickClean[cur] : pickAll[cur];
+    if (pm === 0) return null;
     const idxs: number[] = [];
     for (let i = 0; i < n; i++) if (pm & (1 << i)) idxs.push(i);
     const meld = tryCreateMeld(idxs.map((i) => cards[i]));
     if (!meld) return null;
     melds.push(meld);
-    cur = parent[cur];
+    const prev = track ? parentClean[cur] : parentAll[cur];
+    track = track ? prevTrack[cur] : 0;
+    cur = prev;
   }
   return melds;
 }

@@ -99,6 +99,11 @@ export default function App() {
   const cancelled = useRef(false);
   const paused = useRef(false);
   const botTurnKey = useRef<string>("");
+  // Consecutive invalid bot actions within one turn — bounds the stale-plan
+  // replan loop so a planner/engine disagreement can never spin forever.
+  const botInvalidRef = useRef(0);
+  // Turn key for which an undoPickup recovery was already attempted.
+  const botRecoveredKeyRef = useRef<string | null>(null);
 
   /* ---------------- toasts ---------------- */
 
@@ -248,6 +253,50 @@ export default function App() {
         const reducedMotion =
           typeof window !== "undefined" &&
           !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+        // A planned action went stale — replan from the live state. Bounded:
+        // after repeated failures try putting a pile pickup back (undoPickup
+        // returns to the draw step), and never spin forever.
+        const replanAfterInvalid = (res: ActionResult): void => {
+          setGame(res.state);
+          handleEvents(res.events);
+          if (
+            res.state.phase !== "play" ||
+            !res.state.players[res.state.current]?.isBot
+          ) {
+            botInvalidRef.current = 0;
+            setBotBusy(null);
+            return;
+          }
+          botInvalidRef.current += 1;
+          let base: GameState = res.state;
+          const key = `${base.round}-${base.turnCount}-${base.current}`;
+          if (
+            botInvalidRef.current >= 3 &&
+            base.pickupUndoable &&
+            base.pendingLayId !== null &&
+            botRecoveredKeyRef.current !== key
+          ) {
+            const u = undoPickup(base);
+            if (!u.events.some((e) => e.type === "invalid")) {
+              botRecoveredKeyRef.current = key;
+              botInvalidRef.current = 0;
+              base = u.state;
+              setGame(base);
+              handleEvents(u.events);
+            }
+          }
+          if (botInvalidRef.current >= 8) {
+            console.error(
+              "[bot] too many consecutive invalid actions, parking turn",
+              { key, state: base }
+            );
+            toast("Bot se zasekl — tah bude nutné opakovat.", "bad");
+            botInvalidRef.current = 0;
+            setBotBusy(null);
+            return;
+          }
+          runBotChain(base, planBotTurn(base), 0);
+        };
         // Bot discard: stage the flight; the engine commit runs on landing
         // (fly-then-commit, mirrors the human discard).
         if (a.kind === "discard") {
@@ -256,15 +305,10 @@ export default function App() {
             if (reducedMotion) sfx.discard();
             const res = applyBotAction(state, a);
             if (res.events.some((e) => e.type === "invalid")) {
-              setGame(res.state);
-              handleEvents(res.events);
-              if (res.state.phase === "play" && res.state.players[res.state.current].isBot) {
-                runBotChain(res.state, planBotTurn(res.state), 0);
-              } else {
-                setBotBusy(null);
-              }
+              replanAfterInvalid(res);
               return;
             }
+            botInvalidRef.current = 0;
             setGame(res.state);
             handleEvents(res.events);
             if (res.state.phase !== "play") {
@@ -296,16 +340,10 @@ export default function App() {
         if (a.kind === "draw" || a.kind === "jolly") {
           const res = applyBotAction(state, a);
           if (res.events.some((e) => e.type === "invalid")) {
-            // plan went stale — replan from the live state
-            setGame(res.state);
-            handleEvents(res.events);
-            if (res.state.phase === "play" && res.state.players[res.state.current].isBot) {
-              runBotChain(res.state, planBotTurn(res.state), 0);
-            } else {
-              setBotBusy(null);
-            }
+            replanAfterInvalid(res);
             return;
           }
+          botInvalidRef.current = 0;
           if (res.state.phase !== "play") {
             setGame(res.state);
             handleEvents(res.events);
@@ -341,16 +379,10 @@ export default function App() {
         }
         const res = applyBotAction(state, a);
         if (res.events.some((e) => e.type === "invalid")) {
-          // plan went stale — replan from the live state
-          setGame(res.state);
-          handleEvents(res.events);
-          if (res.state.phase === "play" && res.state.players[res.state.current].isBot) {
-            runBotChain(res.state, planBotTurn(res.state), 0);
-          } else {
-            setBotBusy(null);
-          }
+          replanAfterInvalid(res);
           return;
         }
+        botInvalidRef.current = 0;
         setGame(res.state);
         handleEvents(res.events);
         if (res.state.phase !== "play") {
@@ -424,15 +456,18 @@ export default function App() {
     }
     const res = discard(st, staged.cardId);
     if (res.events.some((e) => e.type === "invalid")) {
+      botInvalidRef.current += 1;
       setGame(res.state);
       handleEvents(res.events);
       if (res.state.phase === "play" && res.state.players[res.state.current].isBot) {
         runBotChain(res.state, planBotTurn(res.state), 0);
       } else {
+        botInvalidRef.current = 0;
         setBotBusy(null);
       }
       return;
     }
+    botInvalidRef.current = 0;
     setGame(res.state);
     handleEvents(res.events);
     if (res.state.phase !== "play") {
@@ -460,6 +495,7 @@ export default function App() {
     const key = `${game.round}-${game.turnCount}-${game.current}`;
     if (botTurnKey.current === key) return; // StrictMode / double-run guard
     botTurnKey.current = key;
+    botInvalidRef.current = 0;
     setBotBusy(p.id);
     setStepText(`${p.name} přemýšlí…`);
     // let the "thinking" state paint before the (sync) plan computation

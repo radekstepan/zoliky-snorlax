@@ -220,9 +220,19 @@ function dealRound(state: GameState): void {
     }
   }
   if (keptJoker) state.players[cutter].hand.push(keptJoker);
-  // Jokers kept from the last round rejoin their owner's hand.
+  // Jokers kept from the last round rejoin their owner's hand. They still
+  // carry last round's ids, which the freshly built deck reuses — re-assign
+  // ids above the deck range so every card id stays unique (engine logic
+  // removes/selects cards by id and would drop all copies at once).
+  let freshId =
+    Math.max(
+      ...state.deck.map((c) => c.id),
+      ...state.players.flatMap((p) => p.hand.map((c) => c.id)),
+      state.jollyCard?.id ?? -1
+    ) + 1;
   for (const p of state.players) {
     if (p.stash.length > 0) {
+      for (const jc of p.stash) jc.id = freshId++;
       p.hand.push(...p.stash);
       p.stash = [];
     }
@@ -407,21 +417,37 @@ export function layMeld(state: GameState, cardIds: number[]): ActionResult {
   if (selected.length < RULES.SET_MIN)
     return invalid(state, "Kombinace musí mít alespoň 3 karty.");
 
-  // Partition selection into valid melds covering ALL selected cards
-  const covered = coverAll(selected);
-  if (!covered || covered.length === 0)
+  const s = structuredClone(state);
+  const p = s.players[s.current];
+  const wasMelded = p.melded;
+  // A Jolly Hand lay bypasses the first-meld gate — the whole hand goes down.
+  const needsGate = !s.jollyRush && !wasMelded;
+
+  // Partition selection into valid melds covering ALL selected cards. For a
+  // first meld the cover itself must meet the gate (36 + clean run) — the
+  // same condition the pile-take check and the bot planner use — otherwise
+  // a legally taken card could never be laid and the turn would get stuck.
+  const covered = coverAll(
+    selected,
+    needsGate,
+    needsGate ? RULES.FIRST_MELD_POINTS : 0
+  );
+  if (!covered || covered.length === 0) {
+    if (needsGate) {
+      // The cards may form melds, just not a valid FIRST meld — say why.
+      const anyCover = coverAll(selected);
+      if (anyCover) {
+        return invalid(state, firstMeldProblem(anyCover) ?? "Neplatný první výklad.");
+      }
+    }
     return invalid(
       state,
       "Vybrané karty netvoří platné kombinace (musí být využity všechny)."
     );
-
-  const s = structuredClone(state);
-  const p = s.players[s.current];
-  const wasMelded = p.melded;
+  }
   const newMelds = covered.map((m) => ({ ...m, owner: p.id }));
 
-  // A Jolly Hand lay bypasses the first-meld gate — the whole hand goes down.
-  if (!s.jollyRush && !wasMelded && !firstMeldOk(newMelds)) {
+  if (needsGate && !firstMeldOk(newMelds)) {
     return invalid(state, firstMeldProblem(newMelds) ?? "Neplatný první výklad.");
   }
 
