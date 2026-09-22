@@ -121,7 +121,7 @@ export function createGame(config: GameConfig): GameState {
   const players: PlayerState[] = [
     {
       id: 0,
-      name: "Ty",
+      name: "Hráč",
       isBot: false,
       hand: [],
       melded: false,

@@ -1131,10 +1131,10 @@ export default function Board({
                 boxShadow: humanTurn ? `0 0 14px ${hueColor(human.hue, 50)}88` : undefined,
               }}
             >
-              T
+              H
             </div>
             <div className="flex items-center gap-2">
-              <span className="font-pixel text-[9px]">Ty</span>
+              <span className="font-pixel text-[9px]">Hráč</span>
               <span className="font-pixel text-[10px] neon-gold">{human.score}</span>
               {human.melded && (
                 <span className="font-pixel text-[7px] px-1.5 py-0.5 rounded bg-neon-green/20 text-neon-green border border-neon-green/40">
