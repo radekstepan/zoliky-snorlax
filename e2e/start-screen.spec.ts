@@ -16,10 +16,10 @@ test.describe("start screen", () => {
   test("lets the player pick player count, difficulty and target", async ({ page }) => {
     await page.getByRole("button", { name: "3 HRÁČI" }).click();
     await page.getByRole("button", { name: "TĚŽKÁ" }).click();
-    await page.getByRole("button", { name: "500" }).click();
+    await page.getByRole("button", { name: "50" }).click();
     await page.getByTestId("start-game").click();
     await expect(page.getByTestId("board")).toBeVisible();
-    await expect(page.getByText("CÍL 500")).toBeVisible();
+    await expect(page.getByText("CÍL 50")).toBeVisible();
   });
 
   test("opens and closes the rules modal", async ({ page }) => {

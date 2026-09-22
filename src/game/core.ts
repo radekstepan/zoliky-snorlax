@@ -112,7 +112,7 @@ export function shuffle<T>(arr: T[]): T[] {
 /* ------------------------------------------------------------------ */
 
 export const RULES = {
-  TARGET_SCORE: 300,
+  TARGET_SCORE: 30,
   FIRST_MELD_POINTS: 36,
   HAND_SIZE: 12,
   SET_MIN: 3,

@@ -43,9 +43,9 @@ let toastSeq = 0;
 export default function App() {
   const [screen, setScreen] = useState<"menu" | "game">("menu");
   const [config, setConfig] = useState<StartConfig>({
-    playerCount: 4,
+    playerCount: 2,
     difficulty: "medium",
-    target: 300,
+    target: 30,
   });
   const [game, setGame] = useState<GameState | null>(null);
   const gameRef = useRef(game);

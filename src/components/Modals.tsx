@@ -165,7 +165,7 @@ export function StartScreen({
         <div>
           <div className="panel-title mb-2">Cíl hry (minusové body — přežij nad limitem)</div>
           <div className="flex gap-2">
-            {[200, 300, 500].map((t) => (
+            {[20, 30, 50].map((t) => (
               <SegButton key={t} active={config.target === t} onClick={() => setConfig({ ...config, target: t })} color="pink">
                 {t}
               </SegButton>
