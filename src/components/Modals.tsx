@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { ReactNode } from "react";
+import { ReactNode, useState } from "react";
 import { Difficulty, GameState } from "../game/engine";
 import { RULES } from "../game/core";
 import { kartyCount } from "../utils/czech";
@@ -36,6 +36,112 @@ function ModalShell({
       >
         {children}
       </motion.div>
+    </motion.div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Non-blocking end-of-round / end-of-game shell                      */
+/*  The table (melds + piles + closing card) stays visible behind:     */
+/*  a top celebration banner + a collapsible bottom sheet with scores  */
+/*  and actions. The wrapper is pointer-events-none so the board shows */
+/*  through; only banner and sheet capture clicks.                     */
+/* ------------------------------------------------------------------ */
+
+const CONFETTI_COLORS = ["#ff2a6d", "#05d9e8", "#ffd319", "#3df585", "#b537f2", "#f6efdd"];
+
+function Confetti({ count = 18 }: { count?: number }) {
+  if (
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+  ) {
+    return null;
+  }
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-x-0 -top-2 h-16 overflow-visible">
+      {Array.from({ length: count }).map((_, i) => {
+        const left = (i * 53 + 7) % 100;
+        const delay = (i % 6) * 0.18;
+        const color = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
+        const drift = (i % 2 ? 1 : -1) * (10 + ((i * 7) % 22));
+        return (
+          <motion.span
+            key={i}
+            className="absolute top-0 inline-block rounded-[2px]"
+            style={{ left: `${left}%`, width: 6, height: 9, background: color }}
+            initial={{ y: -8, opacity: 0, rotate: 0 }}
+            animate={{ y: [0, 44, 70], opacity: [0, 1, 0], x: [0, drift / 2, drift], rotate: [0, 180, 360] }}
+            transition={{ duration: 1.8 + (i % 4) * 0.25, delay, repeat: Infinity, ease: "easeIn" }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function EndShell({
+  banner,
+  actions,
+  children,
+  testId,
+  confetti = false,
+}: {
+  banner: ReactNode;
+  actions: ReactNode;
+  children: ReactNode;
+  testId: string;
+  confetti?: boolean;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.25 }}
+      data-testid={testId}
+      className="fixed inset-0 z-40 pointer-events-none flex flex-col"
+    >
+      {/* celebration banner — top, compact, never covers the piles */}
+      <div className="flex justify-center px-4 pt-3">
+        <motion.div
+          initial={{ y: -26, scale: 0.92, opacity: 0 }}
+          animate={{ y: 0, scale: 1, opacity: 1 }}
+          transition={{ type: "spring", stiffness: 260, damping: 20, delay: 0.05 }}
+          data-testid="end-banner"
+          className="pointer-events-auto relative panel px-4 py-3 sm:px-6 text-center max-w-xl w-auto"
+        >
+          {confetti && <Confetti />}
+          {banner}
+        </motion.div>
+      </div>
+
+      <div className="flex-1 min-h-0" />
+
+      {/* bottom sheet — collapsible so the full table can be admired */}
+      <div className="flex justify-center items-end px-3 sm:px-5 pb-3 sm:pb-4">
+        <motion.div
+          initial={{ y: 60, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ type: "spring", stiffness: 240, damping: 24, delay: 0.12 }}
+          className="pointer-events-auto panel w-full max-w-md p-4 sm:p-5 relative"
+        >
+          <button
+            type="button"
+            onClick={() => setCollapsed((v) => !v)}
+            aria-expanded={!collapsed}
+            className="absolute -top-3 left-1/2 -translate-x-1/2 btn-arcade btn-ghost px-3 py-1.5 text-[7px] whitespace-nowrap"
+          >
+            {collapsed ? "▲ VÝSLEDKY" : "▼ SCHOVAT · STŮL"}
+          </button>
+          {!collapsed && (
+            <div data-testid="end-sheet-body" className="max-h-[30vh] overflow-y-auto pixel-scroll">
+              {children}
+            </div>
+          )}
+          <div className={collapsed ? "mt-2" : "mt-3"}>{actions}</div>
+        </motion.div>
+      </div>
     </motion.div>
   );
 }
@@ -333,27 +439,36 @@ export function RoundEndModal({
   if (!info) return null;
   const closer = info.closedBy >= 0 ? state.players[info.closedBy] : null;
   return (
-    <ModalShell>
-      <div className="text-center mb-4">
-        <h2 className="font-pixel text-[15px] neon-gold">KOLO {state.round} KONČÍ</h2>
-        <div className="font-pixel text-[9px] mt-3 text-[#cfc7f5]">
-          {closer ? (
-            <>
-              <span className={closer.id === 0 ? "neon-green" : "neon-blue"}>{closer.name}</span>
-              {" "}zavírá
-              {info.jolly ? (
-                <span className="neon-pink"> JOLLY HAND — DVOJNÁSOBNÉ BODY!</span>
-              ) : (
-                "!"
-              )}
-            </>
-          ) : (
-            "Karty došly — kolo končí bez zavření."
-          )}
-        </div>
-      </div>
-
-      <div className="space-y-1.5 mb-5">
+    <EndShell
+      testId="round-end-sheet"
+      banner={
+        <>
+          <h2 className="font-pixel text-[13px] sm:text-[15px] neon-gold">KOLO {state.round} KONČÍ</h2>
+          <div className="font-pixel text-[8px] sm:text-[9px] mt-2 text-[#cfc7f5]">
+            {closer ? (
+              <>
+                <span className={closer.id === 0 ? "neon-green" : "neon-blue"}>{closer.name}</span>
+                {" "}zavírá
+                {info.jolly ? (
+                  <span className="neon-pink"> JOLLY HAND — DVOJNÁSOBNÉ BODY!</span>
+                ) : (
+                  "!"
+                )}
+              </>
+            ) : (
+              "Karty došly — kolo končí bez zavření."
+            )}
+          </div>
+          <div className="font-pixel text-[6.5px] mt-2 opacity-50">Stůl zůstal odkrytý — koukni na výklady i hromádku.</div>
+        </>
+      }
+      actions={
+        <button type="button" onClick={onNextRound} className="btn-arcade btn-green py-3.5 text-[11px] w-full">
+          DALŠÍ KOLO →
+        </button>
+      }
+    >
+      <div className="space-y-1.5">
         {[...state.players]
           .sort((a, b) => b.roundDelta - a.roundDelta)
           .map((p) => (
@@ -385,11 +500,7 @@ export function RoundEndModal({
             </div>
           ))}
       </div>
-
-      <button type="button" onClick={onNextRound} className="btn-arcade btn-green py-3.5 text-[11px] w-full">
-        DALŠÍ KOLO →
-      </button>
-    </ModalShell>
+    </EndShell>
   );
 }
 
@@ -409,22 +520,37 @@ export function GameEndModal({
   const winner = state.winner !== null ? state.players[state.winner] : null;
   const humanWon = winner?.id === 0;
   return (
-    <ModalShell>
-      <div className="text-center mb-5">
-        <motion.div
-          initial={{ scale: 0.5, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: "spring", stiffness: 200, damping: 12, delay: 0.1 }}
-          className={`font-pixel text-[22px] sm:text-[26px] ${humanWon ? "neon-gold" : "neon-pink"}`}
-        >
-          {humanWon ? "★ VYHRÁL JSI ★" : `${winner?.name ?? "Nikdo"} VÍTĚZÍ`}
-        </motion.div>
-        <div className="font-pixel text-[8px] mt-3 opacity-60">
-          {humanWon ? "Skvělá hra! Botové se klanějí." : "Zkus to znovu — pomsta bude sladká."}
+    <EndShell
+      testId="game-end-sheet"
+      confetti
+      banner={
+        <>
+          <motion.div
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: "spring", stiffness: 200, damping: 12, delay: 0.1 }}
+            className={`font-pixel text-[18px] sm:text-[22px] ${humanWon ? "neon-gold" : "neon-pink"}`}
+          >
+            {humanWon ? "★ VYHRÁL JSI ★" : `${winner?.name ?? "Nikdo"} VÍTĚZÍ`}
+          </motion.div>
+          <div className="font-pixel text-[7px] sm:text-[8px] mt-2 opacity-60">
+            {humanWon ? "Skvělá hra! Botové se klanějí." : "Zkus to znovu — pomsta bude sladká."}
+          </div>
+          <div className="font-pixel text-[6.5px] mt-2 opacity-50">Finální stůl je pod tím — schovej výsledky a pokochej se.</div>
+        </>
+      }
+      actions={
+        <div className="flex flex-col gap-2.5">
+          <button type="button" onClick={onRematch} className="btn-arcade btn-primary py-3.5 text-[11px] w-full">
+            ▶ HRÁT ZNOVU
+          </button>
+          <button type="button" onClick={onMenu} className="btn-arcade btn-ghost py-3 text-[9px] w-full">
+            ZPĚT DO MENU
+          </button>
         </div>
-      </div>
-
-      <div className="space-y-1.5 mb-5">
+      }
+    >
+      <div className="space-y-1.5">
         {[...state.players]
           .sort((a, b) => b.score - a.score)
           .map((p, i) => (
@@ -447,16 +573,7 @@ export function GameEndModal({
             </div>
           ))}
       </div>
-
-      <div className="flex flex-col gap-2.5">
-        <button type="button" onClick={onRematch} className="btn-arcade btn-primary py-3.5 text-[11px] w-full">
-          ▶ HRÁT ZNOVU
-        </button>
-        <button type="button" onClick={onMenu} className="btn-arcade btn-ghost py-3 text-[9px] w-full">
-          ZPĚT DO MENU
-        </button>
-      </div>
-    </ModalShell>
+    </EndShell>
   );
 }
 

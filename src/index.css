@@ -259,8 +259,17 @@ body,
 
 /* closing discard: the game-closing card lands face-down, slightly offset
    and turned — like a real jolly close. Applied to the pile-top wrapper so
-   it composes with the inner pop/glow animation. */
-.card-close-offset { transform: rotate(10deg) translate(5px, -3px); }
+   it composes with the inner pop/glow animation. The previous discard stays
+   visible underneath so the pile doesn't vanish on close. */
+.closing-stack { position: relative; }
+.closing-stack-under { transform: none; opacity: 1; }
+.closing-stack-under-empty { transform: none; }
+.card-close-offset {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: rotate(10deg) translate(7px, -5px);
+}
 
 /* ---------- scrollbars ---------- */
 .pixel-scroll::-webkit-scrollbar { height: 8px; width: 8px; }

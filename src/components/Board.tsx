@@ -247,6 +247,7 @@ function Piles({
 }) {
   const canDraw = humanTurn && state.turnPhase === "draw" && !state.skipDraw && state.phase === "play";
   const top = state.discard[state.discard.length - 1];
+  const under = state.discard.length > 1 ? state.discard[state.discard.length - 2] : null;
   const isClosingTop = closingTopId != null && !!top && top.id === closingTopId;
   return (
     <div className="flex items-center justify-center gap-6 sm:gap-10">
@@ -330,14 +331,39 @@ function Piles({
             isClosingTop ? (
               <div
                 key={top.id}
-                data-testid="closing-pile-top"
-                className="card-close-offset"
+                className="closing-stack"
                 style={{ filter: canDraw ? "drop-shadow(0 0 14px rgba(255,211,25,0.45))" : undefined }}
               >
+                {under ? (
+                  <div
+                    data-testid="closing-pile-under"
+                    className="closing-stack-under"
+                    aria-hidden
+                  >
+                    <PlayingCard
+                      card={under}
+                      size="md"
+                      prefix={prefix}
+                      noAnim
+                    />
+                  </div>
+                ) : (
+                  <div
+                    data-testid="closing-pile-under"
+                    className="closing-stack-under closing-stack-under-empty rounded-lg border-2 border-dashed border-white/20"
+                    style={{ width: CARD_SIZES.md.w, aspectRatio: "5/7" }}
+                    aria-hidden
+                  />
+                )}
                 <div
-                  className={`card-back rounded-lg ${top.id === pilePopId ? "card-discard-pop card-discard-glow" : ""}`}
-                  style={{ width: CARD_SIZES.md.w, aspectRatio: "5/7" }}
-                />
+                  data-testid="closing-pile-top"
+                  className="card-close-offset"
+                >
+                  <div
+                    className={`card-back rounded-lg ${top.id === pilePopId ? "card-discard-pop card-discard-glow" : ""}`}
+                    style={{ width: CARD_SIZES.md.w, aspectRatio: "5/7" }}
+                  />
+                </div>
               </div>
             ) : (
             <div
