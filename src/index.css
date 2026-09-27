@@ -197,9 +197,17 @@ body,
   background: linear-gradient(115deg, rgba(255,255,255,0.35) 0%, transparent 40%, transparent 60%, rgba(255,255,255,0.12) 100%);
 }
 /* joker standing in for another card (e.g. a King): keep the diagonal
-   rainbow look, but no sideways crawl */
+   rainbow look, but no sideways crawl. Gold inner ring separates the pink
+   sliver peeking from behind the next overlapped card, so naturals like
+   8/9 next to a 7-joker don't read as highlighted. */
 .joker-card.joker-placed {
   animation: none;
+  border-color: rgba(20, 10, 30, 0.85);
+  box-shadow:
+    0 0 0 1.5px rgba(255, 211, 25, 0.7),
+    0 2px 0 rgba(0, 0, 0, 0.35),
+    0 6px 14px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.25);
 }
 
 .card-selected {

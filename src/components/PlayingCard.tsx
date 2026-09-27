@@ -184,8 +184,9 @@ export default function PlayingCard({
             )}
             {isReplacedJoker && (
               <span
-                className="absolute top-0 right-0 font-pixel bg-black/40 rounded-sm px-[2px]"
-                style={{ fontSize: spec.badge - 1, lineHeight: 1.3 }}
+                title="Žolík"
+                className="absolute top-[3px] right-[3px] font-pixel bg-black/70 text-amber-300 border border-amber-300/80 rounded px-[3px] py-[1px] shadow-[0_0_6px_rgba(255,211,25,0.6)]"
+                style={{ fontSize: spec.badge, lineHeight: 1.3 }}
               >
                 Ž
               </span>

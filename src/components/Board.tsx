@@ -2,6 +2,7 @@ import { motion, AnimatePresence, Reorder } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { GameState, meldsLocked } from "../game/engine";
 import { Meld, canAddToMeld, coverAll, canJollyClose, findJokerSwap, meldPoints, isCleanRun, jokerView } from "../game/melds";
+import { getMeldCardAffordance, isMeldHot } from "../game/meldHover";
 import { Card, RULES } from "../game/core";
 import { deviceHovers } from "../utils/device";
 import { kartyCount, kombinaceCount } from "../utils/czech";
@@ -165,7 +166,7 @@ function MeldView({ meld, ownerHue, ownerName, interactive, targetable, swapJoke
   const clean = isCleanRun(meld);
   // Only a genuine layoff/swap destination invites hover — otherwise cards
   // under a resting cursor would lift on mere selection and look highlighted.
-  const hot = targetable || swapJokerId !== null;
+  const hot = isMeldHot({ targetable, swapJokerId });
   return (
     <div
       className={`relative rounded-lg border-2 transition-colors ${
@@ -183,7 +184,7 @@ function MeldView({ meld, ownerHue, ownerName, interactive, targetable, swapJoke
       </div>
       <div className="fan-tight flex px-1 pb-1.5 pt-0.5">
         {meld.cards.map((c) => {
-          const isSwapTarget = c.joker && c.id === swapJokerId;
+          const afford = getMeldCardAffordance(c, { interactive, swapJokerId, hoverLift });
           // Set jokers carry no suit (any missing suit completes the set),
           // so they render as plain jokers rather than a rank with a
           // placeholder symbol.
@@ -197,9 +198,9 @@ function MeldView({ meld, ownerHue, ownerName, interactive, targetable, swapJoke
               size={size}
               asRank={jv.asRank}
               asSuit={jv.asSuit}
-              target={isSwapTarget ?? false}
-              hoverable={interactive && (targetable || !!isSwapTarget)}
-              hoverLift={hoverLift}
+              target={afford.target}
+              hoverable={afford.hoverable}
+              hoverLift={afford.hoverLift}
               onClick={
                 c.joker && interactive
                   ? (e) => {
